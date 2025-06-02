@@ -1,337 +1,349 @@
+from sqlalchemy.orm import Session
+from ceab.database import get_session
+from ceab.models import Instructor, Course, Measurement, Data
+from jinja2 import Environment, FileSystemLoader
 import pandas as pd
-from pathlib import Path
-import copy
-import os
-import re
-import warnings
-from typing import Union, List, Dict, Optional
-
-class Sheets():
-    """Class with static variables for the Excel sheet names."""
-    instructor = "1 - Instructor"
-    course = "2 - Course"
-    measurement = "3 - Measurement"
-    data = "4 - Data"
+import matplotlib.pyplot as plt
+import subprocess
 
 
-class CEAB():
-    """Class used to represent a CEAB measurements database as a set of pandas DataFrames.
+# Expected ranges for each score
+expected_ranges = {
+    '1': (0.00, 0.10),
+    '2': (0.25, 0.50),
+    '3': (0.40, 0.90),
+    '4': (0.10, 0.30)
+}
 
-    Parameters
-    ----------
-    data_file : str
-        Name of the Excel file containing the CEAB data.
-    """
-
-    valid_keys_in = {
-        'instructor' : ['instructorID', 'firstName', 'lastName'],
-        'course' : ['courseID', 'instructorID', 'prefix', 'number', 'suffix', 'academicYear', 'yearInProgram'],
-        'measurement' : ['measurementID', 'courseID',  'attribute', 'indicator',  'deliverableType', 'deliverableName', 'date', 'gradeScale', 'maxScore', 'minPercentScore2', 'minPercentScore3', 'minPercentScore4', 'improvementTheme'],
-        'data' : ['dataID', 'studentID', 'measurementID', 'value']
-    }
-
-    def __init__(self, data_file=None):
-        """Class initialization"""
-        self._data = {}
-
-        self._attribute_names = ['instructor', 'course', 'measurement', 'data']
-
-        if data_file:
-            # If file is provided, check that it is the correct type and read.
-            # Note that the 'data' sheet has a different format so is not read here.
-            data_file = Path(data_file)
-            if data_file.suffix == '.xlsx':
-                for attr in self._attribute_names:
-                    if attr == 'data':
-                        pass
-                    else:
-                        # Try to read the sheet; if it doesn't exist, raise an error
-                        try:
-                            self._data[attr] = self.read_sheet(data_file, getattr(Sheets, attr))
-                        except ValueError:
-                            raise ValueError(f'The sheet {getattr(Sheets, attr)} was not found in the Excel file {data_file}.')
-            else:
-                raise TypeError(f'A file with the invalid extension {data_file.suffix}, was passed to the CEAB constructor. \n'
-                                f'Creating a CEAB object requires an Excel file with the extension .xlsx')
-
-            # The 'data' table is input into the Excel sheet in wide format for convenience
-            # and contains a header row with instructions. It must now be read by skipping the
-            # header and converting to long form.
-            data = self.read_sheet(data_file, getattr(Sheets, 'data'), skiprows=1)
-            self._data['data'] = pd.melt(data, 
-                id_vars=['studentID'], 
-                value_vars=data.columns.tolist().remove('studentID'), 
-                var_name='measurementID')
-
-            # Drop NaNs and zeros from the 'data' table
-            self._data['data'] = self._data['data'].dropna()
-            self._data['data'] = self._data['data'][self._data['data']['value'] != 0]
-
-            # Create a column for the 'dataID'
-            self._data['data'].insert(0, 'dataID', self._data['data'].index)
-
-            # Check that all columns exist and that no extra columns are added
-            for attr in self._attribute_names:
-                self.check_columns(attr)
-
-            # Define the columns where NaNs are not allowed
-            no_nan_columns = copy.deepcopy(self.valid_keys_in)
-            for col in ['maxScore', 'minPercentScore2', 'minPercentScore3', 'minPercentScore4', 'improvementTheme']:
-                no_nan_columns['measurement'].remove(col)
-
-            # Check if there are any NaNs where there shouldn't be and provide a warning if there are
-            for table, columns in no_nan_columns.items():
-                for column in columns:
-                    if self._data[table][column].isnull().values.any():
-                        # Get the rows where the NaNs occur
-                        rows = self._data[table][self._data[table][column].isnull()]
-                        for index, row in rows.iterrows():
-                            tableID = row[f'{table}ID']
-                            warnings.warn(f'NaN found in column \'{column}\' of table \'{table}\'.\n'
-                                          f'   The value of {table}ID is {tableID}.\n'
-                                          f'   The data file is {data_file}.')
-    
-            # For any measurements using 'CEAB (1-4)' scale, round the data to the nearest integer
-            measurements = self.get_row_IDs_matching_criteria('measurement', {'gradeScale' : 'CEAB (1-4)'})
-            for measurement in measurements:
-                self._data['data'].loc[self._data['data']['measurementID'] == measurement, 'value'] = self._data['data'].loc[self._data['data']['measurementID'] == measurement, 'value'].round().astype(int)
-
-            # For any measurements using 'Raw Scores (Standard Bins)', convert to CEAB scale
-            measurements = self.get_row_IDs_matching_criteria('measurement', {'gradeScale' : 'Raw Scores (Standard Bins)'})
-            for measurement in measurements:
-                # Check that the maxScore is provided
-                row = self.measurement.loc[self.measurement['measurementID'] == measurement].iloc[0]
-                if pd.isna(row['maxScore']):
-                    raise ValueError(f'The maxScore is missing for measurement {measurement}.')
-
-                # Set the bins and the corresponding scores
-                bins = [0, 50, 60, 85, 100]
-                scores = [1, 2, 3, 4]
-                maxScore = row['maxScore']
-
-                # Bin the data
-                self._data['data'].loc[self._data['data']['measurementID'] == measurement, 'value'] = pd.cut(
-                    self._data['data'].loc[self._data['data']['measurementID'] == measurement, 'value']/maxScore*100,
-                    bins=bins,
-                    labels=scores,
-                    include_lowest=True
-                ).astype(int)
-
-            # For any measurements using 'Raw Scores (Custom Bins)', convert to CEAB scale
-            measurements = self.get_row_IDs_matching_criteria('measurement', {'gradeScale' : 'Raw Scores (Custom Bins)'})
-            for measurement in measurements:
-                required_data = ['maxScore', 'minPercentScore2', 'minPercentScore3', 'minPercentScore4']
-                # Check that the required data is provided
-                row = self.measurement.loc[self.measurement['measurementID'] == measurement].iloc[0]
-                for data in required_data:
-                    if pd.isna(row[data]):
-                        raise ValueError(f'The maxScore is missing for measurement {measurement}.')
-
-                # Set the bins and the corresponding scores
-                bins = [0, row['minPercentScore2'], row['minPercentScore3'], row['minPercentScore4'], 100]
-                scores = [1, 2, 3, 4]
-                maxScore = row['maxScore']
-
-                # Bin the data
-                self._data['data'].loc[self._data['data']['measurementID'] == measurement, 'value'] = pd.cut(
-                    self._data['data'].loc[self._data['data']['measurementID'] == measurement, 'value']/maxScore*100,
-                    bins=bins,
-                    labels=scores,
-                    include_lowest=True
-                ).astype(int)
+# Score names
+score_names = {
+    '1': 'Unacceptable',
+    '2': 'Below Expectations',
+    '3': 'Meets Expectations',
+    '4': 'Exceeds Expectations'
+}
 
 
-            # Check that all data are integers between 1 and 4
-            out_of_range_values = self._data['data'][(self._data['data']['value'] < 1) | (self._data['data']['value'] > 4)]
-            if not out_of_range_values.empty:
-                # Get the rows where the out of range values occur
-                for index, row in out_of_range_values.iterrows():
-                    dataID = row['dataID']
-                    measurementID = row['measurementID']
-                    value = row['value']
-                    warnings.warn(f'Value {value} out of range in dataID \'{dataID}\' for measurementID \'{measurementID}\'.\n'
-                                  f'   The data file is {data_file}.')
+class CEAB:
+    """Class used to represent a CEAB measurements database."""
 
-            # Now that all data are converted, the columns relating to custom scales can be removed
-            self._data['measurement'] = self._data['measurement'].drop(columns=['gradeScale', 'maxScore', 'minPercentScore2', 'minPercentScore3', 'minPercentScore4'])
-            
-        else:
-            # If no file is provided, create an empty DataFrame for each class attribute.
-            for attr in self._attribute_names:
-                self._data[attr] = pd.DataFrame()
+    def __init__(self):
+        """Initialize the CEAB class with a database session."""
+        self.session: Session = get_session()
 
-    def read_sheet(self, file_name, sheet_name, skiprows=None):
-        """Read a sheet from an Excel file.
-
-        Parameters
-        ----------
-        file_name : str, Path
-            Name of the Excel file.
-        sheet_name : str
-            Name of the sheet to be read.
-
-        Returns
-        -------
-        pandas.DataFrame
-            The data contained in the specified Excel sheet.
-        """
-        warnings.simplefilter(action='ignore', category=UserWarning)
-        df = pd.read_excel(file_name, sheet_name, skiprows=skiprows)
-        warnings.simplefilter(action='always', category=UserWarning)
-        return df
-
-    def check_columns(self, sheet):
-        """Check that the columns in a sheet are valid.
-
-        Parameters
-        ----------
-        sheet : pandas.DataFrame
-            The sheet to be checked.
-        """
-        df = self._data[sheet]
-        valid_columns = self.valid_keys_in[sheet]
-        for column in df.columns:
-            if column not in valid_columns:
-                raise ValueError(f'Invalid column {column} in sheet {sheet}. Valid columns are {valid_columns}.')
-        for column in valid_columns:
-            if column not in df.columns:
-                raise ValueError(f'Missing column {column} in sheet {sheet}. Valid columns are {valid_columns}.')
-
-    @property
-    def instructor(self):
-        """Get the 'intructor' table.
-
-        Returns
-        -------
-        pandas.DataFrame
-            The 'instructor' table, which contains information about course instructors.
-        """
-        return self._data['instructor']
-
-    @property
-    def course(self):
-        """Get the 'course' table.
-
-        Returns
-        -------
-        pandas.DataFrame
-            The 'course' table, which contains information about course offerings.
-        """
-        return self._data['course']
-
-    @property
-    def measurement(self):
-        """Get the 'measurement' table.
-
-        Returns
-        -------
-        pandas.DataFrame
-            The 'measurement' table, which contains information about the measurements taken
-            for particular courses.
-        """
-        return self._data['measurement']
-
-    @property
-    def data(self):
-        """Get the 'data' table.
-
-        Returns
-        -------
-        pandas.DataFrame
-            The 'data' table, which contains measurement data.
-        """
-        return self._data['data']
-
-    @staticmethod
-    def combine(first, second):
-        """Combine the tables from two CEAB objects.
-
-        Parameters
-        ----------
-        first : CEAB
-            First CEAB object.
-        second : CEAB
-            Second CEAB object.
-
-        Returns
-        -------
-        CEAB
-            CEAB object containing tables combined from the two input arguments.
-        """
-        new = CEAB()
-        for attr in new._attribute_names:
-            new._data[attr] = pd.concat([getattr(first, attr), getattr(second, attr)])
-            new._data[attr].drop_duplicates(subset=new._data[attr].columns[0], keep='first', inplace=True)
-        return new
-
-    def __add__(self, other):
-        """Add two CEAB objects together"""
-        return CEAB.combine(self, other)
-
-    def get_row_IDs_matching_criteria(self, table_name, criteria):
-        """Get the row IDs matching specific attributes for a given data table.
+    def get_table_as_dataframe(self, table_name: str) -> pd.DataFrame:
+        """Fetch a table from the database and return it as a pandas DataFrame.
 
         Parameters
         ----------
         table_name : str
-            Name of the table from which to extract data.
+            Name of the table to fetch ('instructor', 'course', 'measurement', 'data').
+
+        Returns
+        -------
+        pandas.DataFrame
+            The table as a pandas DataFrame.
+        """
+        table_map = {
+            "instructor": Instructor,
+            "course": Course,
+            "measurement": Measurement,
+            "data": Data,
+        }
+
+        if table_name not in table_map:
+            raise ValueError(f"Invalid table name: {table_name}")
+
+        # Query the table and convert to a pandas DataFrame
+        query = self.session.query(table_map[table_name])
+        return pd.DataFrame([row.__dict__ for row in query.all()]).drop("_sa_instance_state", axis=1)
+
+    def get_row_IDs_matching_criteria(self, table_name: str, criteria: dict) -> list:
+        """Get the row IDs matching specific attributes for a given table.
+        Note: the 'data' table uses a composite key and is therefore not including in this function.
+
+        Parameters
+        ----------
+        table_name : str
+            Name of the table to query ('instructor', 'course', 'measurement').
         criteria : dict
-            Dictionary of attributes and the values to select.
+            Dictionary of attributes and their values to filter by.
 
         Returns
         -------
         list
             List of IDs that match the specified criteria.
         """
-        # Check that the type of 'table_name' is 'str'
-        if type(table_name) is not str:
-            raise TypeError('A table_name of type {} was passed to function get_from_table while the type str was expected.'.format(type(criteria)))
+        table_map = {
+            "instructor": Instructor,
+            "course": Course,
+            "measurement": Measurement,
+        }
 
-        # Check that the type of 'criteria' is 'dict'
-        if type(criteria) is not dict:
-            raise TypeError('A criteria of type {} was passed to function get_from_table while the type dict was expected.'.format(type(criteria)))
+        if table_name not in table_map:
+            raise ValueError(f"Invalid table name: {table_name}")
 
-        # Get the data table by name and filter by the criteria
-        df = getattr(self, table_name)
+        # Build the query with the given criteria
+        query = self.session.query(table_map[table_name])
         for key, value in criteria.items():
-            try:
-                df = df[df[key] == value]
-            except KeyError:
-                raise KeyError('Invalid key {} given in function get_from_table.'.format(key))
+            query = query.filter(getattr(table_map[table_name], key) == value)
 
-        # Return
-        return df['{}ID'.format(table_name)].tolist()
+        # Return the IDs
+        id_column = f"{table_name}ID"
+        return [getattr(row, id_column) for row in query.all()]
+    
+    def get_scores_by_measurement_id(self, measurement_id: str) -> list:
+        """Get scores for a specific measurement ID.
 
+        Parameters
+        ----------
+        measurement_id : str
+            The measurement ID to fetch scores for.
 
-def read_ceab_data(path: str, pattern=None) -> CEAB:
-    """Read CEAB data from a given path.
+        Returns
+        -------
+        list
+            List of scores for the specified measurement ID.
+        """
+        scores = self.session.query(Data.score).filter(Data.measurementID == measurement_id).all()
+        return [v[0] for v in scores] # Extract values from tuples before returning
 
-    Parameters
-    ----------
-    path : str
-        Path to a directory or file containing CEAB data.
+    def get_summary_table_by_course(self) -> pd.DataFrame:
+        """Get a summary table of the data aggregated by course.
 
-    Returns
-    -------
-    CEAB
-        CEAB object containing the data from the specified Excel file(s).
-    """
-    # If a regex pattern is provided, 'path' will be treated as a directory
-    if pattern:
-        ceab = None
-        first_file = True
-        for root, dirs, files in os.walk(path):
-            for file in files:
-                # Get the path of the file relative to top_dir
-                rel_path = os.path.relpath(os.path.join(root, file), path)
-                if re.match(pattern, rel_path):
-                    if first_file:
-                        ceab = CEAB(os.path.join(root, file))
-                        first_file = False
-                    else:
-                        ceab += CEAB(os.path.join(root, file))
-        return ceab
+        Returns
+        -------
+        pandas.DataFrame
+            Summary table of the data by course.
+        """
+        data_list = []
 
-    # if a regex pattern is not provided, 'path' will be treated as a file
-    else:
-        return (CEAB(path))
+        # Query all unique course IDs
+        course_ids = self.session.query(Course.courseID).distinct().all()
+
+        for course_id, in course_ids:
+            # Fetch course details
+            course = self.session.query(Course).filter(Course.courseID == course_id).one()
+            instructor = self.session.query(Instructor).filter(Instructor.instructorID == course.instructorID).one()
+            course_code = f"{course.prefix.strip()} {course.number}{course.suffix.strip() if course.suffix.strip() != 'none' else ''}"
+            instructor_name = f"{instructor.firstName} {instructor.lastName}"
+
+            # Fetch measurements for the course
+            measurements = self.session.query(Measurement).filter(Measurement.courseID == course_id).all()
+
+            for measurement in measurements:
+                # Fetch data for the measurement
+                scores = self.get_scores_by_measurement_id(measurement.measurementID)
+
+                # Compute statistics
+                n_score_1 = scores.count(1)
+                n_score_2 = scores.count(2)
+                n_score_3 = scores.count(3)
+                n_score_4 = scores.count(4)
+                mean_score = sum(scores) / len(scores) if scores else None
+
+                # Append to the data list
+                data_list.append({
+                    "course_code": course_code,
+                    "instructor_name": instructor_name,
+                    "attribute": measurement.attribute,
+                    "indicator": measurement.indicator,
+                    "n_score_1": n_score_1,
+                    "n_score_2": n_score_2,
+                    "n_score_3": n_score_3,
+                    "n_score_4": n_score_4,
+                    "mean_score": mean_score,
+                })
+
+        # Convert to a pandas DataFrame
+        return pd.DataFrame(data_list)
+    
+    def plot_score_distributions(self, score_df: pd.DataFrame, course_code: str):
+        """
+        Plots score distributions as fractions for each unique attribute/indicator,
+        grouped by academic year.
+
+        Parameters
+        ----------
+        score_df : pandas.DataFrame
+            DataFrame containing columns: attribute, indicator, academicYear, n_score_1 through n_score_4.
+        course_code : str
+            The course code to use in the plot filenames.
+        """
+        # Group by attribute-indicator combinations
+        unique_combos = score_df[['attribute', 'indicator']].drop_duplicates()
+
+        for _, row in unique_combos.iterrows():
+            attr = row['attribute']
+            ind = row['indicator']
+
+            subset = score_df[(score_df['attribute'] == attr) & (score_df['indicator'] == ind)]
+
+            score_labels = ['1', '2', '3', '4']
+            bar_width = 0.2
+            x = range(len(score_labels))
+
+            plt.figure(figsize=(8, 5))
+
+            # Draw expected ranges as translucent rectangles
+            for i, label in enumerate(score_labels):
+                low, high = expected_ranges[label]
+                # Draw a horizontal band for the expected range
+                plt.axhspan(
+                    low, high,
+                    xmin=(i + 0.05) / len(score_labels),  # Start just inside this bar group
+                    xmax=(i + 0.95) / len(score_labels),  # End just before the next
+                    color='gray', alpha=0.15, zorder=0
+                )
+
+            for i, (_, year_row) in enumerate(subset.iterrows()):
+                counts = [
+                    year_row['n_score_1'],
+                    year_row['n_score_2'],
+                    year_row['n_score_3'],
+                    year_row['n_score_4']
+                ]
+                total = sum(counts) or 1  # Prevent division by zero
+                fractions = [c / total for c in counts]
+                plt.bar(
+                    [pos + i * bar_width for pos in x],
+                    fractions,
+                    width=bar_width,
+                    label=year_row['academic_year']
+                )
+
+            # Center the x-ticks in the middle of each grouped bar cluster
+            num_years = len(subset)
+            group_width = num_years * bar_width
+            tick_positions = [pos + (group_width - bar_width) / 2 for pos in x]
+            plt.xticks(tick_positions, score_labels)
+
+            plt.xlabel("Score")
+            plt.ylabel("Fraction of Students")
+            plt.ylim(0, 1)
+            plt.legend(title="Academic Year")
+            plt.tight_layout()
+            plt.savefig(f"{course_code.replace(' ', '_')}_{attr}{ind}.png")
+            plt.close()
+
+    def generate_course_report(self, course_code: str, academic_year: str):
+        """Generate a report for a specific course.
+
+        Parameters
+        ----------
+        course_code : str
+            The course code to generate the report for.
+        academic_year : str
+            The academic year for which the report is generated.
+        """
+        # Generate the course prefix, number, and suffix from the course code.
+        # The course code must be in the format "XYZ 1234A" where XYZ is the prefix, 
+        # 1234 is the number, and A is the suffix.
+        course_parts = course_code.split()
+        if len(course_parts) != 2:
+            raise ValueError("Invalid course code format. Expected format: 'XYZ 1234A'.")
+        prefix = course_parts[0]
+        number = int(course_parts[1][0:4] if len(course_parts[1]) > 4 else course_parts[1])
+        suffix = course_parts[1][4:] if len(course_parts[1]) > 4 else "none"
+
+        # Get all of the courseIDs that match the prefix, number, and suffix.
+        course_ids = self.get_row_IDs_matching_criteria("course", {"prefix": prefix, "number": number, "suffix": suffix})
+        if not course_ids:
+            raise ValueError(f"No course found with code: {course_code}")
+        print(f"Course IDs: {course_ids}")
+        
+        # Get all of the measurement data that match the courseIDs.
+        measurements = self.session.query(Measurement).filter(Measurement.courseID.in_(course_ids)).all()
+
+        # Get all of the unique combinations of attribute and indicator in the measurements.
+        attr_ind_pairs = sorted({(m.attribute, m.indicator) for m in measurements})
+        print(f"Attribute-Indicator pairs: {attr_ind_pairs}")
+
+        # Get the score distributions and metadata for all of the measurementIDs.
+        rows = []
+        for m in measurements:
+            scores = self.get_scores_by_measurement_id(m.measurementID)
+            n1, n2, n3, n4 = scores.count(1), scores.count(2), scores.count(3), scores.count(4)
+
+            rows.append({
+                "attribute": m.attribute,
+                "indicator": m.indicator,
+                "academic_year": m.course.academicYear,
+                "n_score_1": n1,
+                "n_score_2": n2,
+                "n_score_3": n3,
+                "n_score_4": n4
+            })
+        scores = pd.DataFrame(rows)
+
+        # Plot the score distributions for each attribute-indicator pair
+        self.plot_score_distributions(scores, course_code)
+
+        # Collect metadata for each attribute-indicator pair
+        attr_ind_data = {}
+        for attr, ind in attr_ind_pairs:
+            # Get the measurements for this attribute-indicator pair
+            measurements = self.session.query(Measurement).filter(
+                Measurement.attribute == attr,
+                Measurement.indicator == ind,
+                Measurement.courseID.in_(course_ids)
+            ).all()
+
+            # Collect metadata
+            attr_ind_data[f"{attr}{ind}"] = {}
+            for m in measurements:
+                # Calculate the fractions of scores
+                scores = self.get_scores_by_measurement_id(m.measurementID)
+                n1, n2, n3, n4 = scores.count(1), scores.count(2), scores.count(3), scores.count(4)
+                n1_frac = n1 / len(scores)
+                n2_frac = n2 / len(scores)
+                n3_frac = n3 / len(scores)
+                n4_frac = n4 / len(scores)
+
+                # Ensure the fractions are within expected ranges
+                notes = []
+                if not (expected_ranges['1'][0] <= n1_frac <= expected_ranges['1'][1]):
+                    notes.append(f"{n1_frac*100:.1f}\% of students received a score of 1 ({score_names['1']}); this is outside the normal range of {expected_ranges['1'][0]*100:.0f}-{expected_ranges['1'][1]*100:.0f}\%.")
+                if not (expected_ranges['2'][0] <= n2_frac <= expected_ranges['2'][1]):
+                    notes.append(f"{n2_frac*100:.1f}\% of students received a score of 2 ({score_names['2']}); this is outside the normal range of {expected_ranges['2'][0]*100:.0f}-{expected_ranges['2'][1]*100:.0f}\%.")
+                if not (expected_ranges['3'][0] <= n3_frac <= expected_ranges['3'][1]):
+                    notes.append(f"{n3_frac*100:.1f}\% of students received a score of 3 ({score_names['3']}); this is outside the normal range of {expected_ranges['3'][0]*100:.0f}-{expected_ranges['3'][1]*100:.0f}\%.")
+                if not (expected_ranges['4'][0] <= n4_frac <= expected_ranges['4'][1]):
+                    notes.append(f"{n4_frac*100:.1f}\% of students received a score of 4 ({score_names['4']}); this is outside the normal range of {expected_ranges['4'][0]*100:.0f}-{expected_ranges['4'][1]*100:.0f}\%.")
+
+                attr_ind_data[f"{attr}{ind}"][m.measurementID] = {
+                    "deliverableType": m.deliverableType,
+                    "deliverableName": m.deliverableName,
+                    "date": m.date.strftime("%Y-%m-%d"),
+                    "academicYear": m.course.academicYear,
+                    "notes": notes
+                }
+        print(f"Attribute-Indicator data: {attr_ind_data}")
+
+        # Set up Jinja2 environment for report template
+        env = Environment(loader=FileSystemLoader("."))
+        template = env.get_template("/assets/instructor_report_template.tex")
+
+        # Render LaTeX with data
+        rendered_tex = template.render(course_code=course_code,
+                                       academic_year=academic_year,
+                                       attr_ind_pairs=attr_ind_pairs,
+                                       attr_ind_data=attr_ind_data)
+        
+        # Save LaTeX output
+        file_name = "instructor_report_{}".format(course_code.replace(' ', '_'))
+        with open(f"{file_name}.tex", "w") as f:
+            f.write(rendered_tex)
+
+        print(f"LaTeX file generated: {file_name}.tex")
+
+        # Compile LaTeX to PDF
+        try:
+            subprocess.run(["pdflatex", "-interaction=nonstopmode", f"{file_name}.tex"], check=True)
+            print(f"PDF generated: {file_name}.pdf")
+        except subprocess.CalledProcessError as e:
+            print("Error during LaTeX compilation:", e)
+
+    def close(self):
+        """Close the database session."""
+        self.session.close()

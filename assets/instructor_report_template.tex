@@ -1,0 +1,78 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{ltablex}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{datetime}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{makecell}
+\usepackage{tabularx}
+
+% Section title setup
+\titleformat{\section}
+  {\normalfont\Large\bfseries} % change \Large to \large or \normalsize to reduce size
+  {\thesection}{1em}{}
+
+% Title spacing setup
+%\titlespacing*{\section}{0pt}{1ex}{0.5ex}
+%\titlespacing*{\paragraph}{0pt}{0pt}{1em}
+
+% Header setup
+\setlength{\headheight}{13.6pt} % Adjust head height to avoid fancyhdr error
+\addtolength{\topmargin}{-1.6pt} % Compensate for the increased head height
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{ {{- course_code }} }
+\chead{CEAB Instructor Report}
+\rhead{\monthname[\month]~\the\day,~\the\year}
+\cfoot{Page \thepage~of~\pageref*{LastPage}}
+
+\begin{document}
+
+\section*{ }
+
+{% for attr_ind_pair in attr_ind_pairs %}
+\section*{Summary of Data for {{ attr_ind_pair[0] -}}{{- attr_ind_pair[1] -}} }
+
+    \noindent\textbf{Summary of Measurement Metadata}
+
+    \begin{itemize}
+        {% for data in attr_ind_data[attr_ind_pair[0] ~ attr_ind_pair[1]].values() %}
+        \item Measurement {{ loop.index }}:
+        \begin{itemize}
+            \item Academic Year: {{ data['academicYear'] }}
+            \item Deliverable Type: {{ data['deliverableType'] }}
+            \item Deliverable Name: {{ data['deliverableName'] }}
+            \item Measurement Date: {{ data['date'] }}
+        \end{itemize}
+        {% endfor %}
+    \end{itemize}
+
+    \noindent\textbf{Plot of Data}
+
+    \begin{centering}
+    \includegraphics[width=0.6\textwidth]{ {{ course_code.replace(" ", "_") }}_{{ attr_ind_pair[0] }}{{ attr_ind_pair[1] }}.png }
+    \end{centering}
+
+    \noindent\textbf{Items to Address in Narrative for {{ academic_year}} Academic Year}
+
+    \begin{itemize}
+    {% for data in attr_ind_data[attr_ind_pair[0] ~ attr_ind_pair[1]].values() %}
+        {% if data['notes'] %}
+            {% for note in data['notes'] %}
+                \item {{ note }}
+            {% endfor %}
+        {% else %}
+            \item No items to address.
+        {% endif %}  
+    {% endfor %}
+    \end{itemize}
+
+{% endfor %}
+
+\end{document}
