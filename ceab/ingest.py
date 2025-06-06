@@ -183,6 +183,9 @@ def insert_into_db(data_dict, overwrite=False):
         for key in data_dict:
             data_dict[key] = data_dict[key].where(pd.notnull(data_dict[key]), None)
 
+        # Replace zero scores with None
+        data_dict["data"]["score"] = data_dict["data"]["score"].replace(0, None)
+
         # Validate 'score' column
         if data_dict["data"]["score"].notnull().any():
             invalid_scores = data_dict["data"][~data_dict["data"]["score"].between(1, 4, inclusive="both")]

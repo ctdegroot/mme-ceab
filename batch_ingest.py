@@ -7,10 +7,10 @@ from ceab.ingest import ingest_excel_data, insert_into_db
 warnings.filterwarnings(
     "ignore",
     message="Data Validation extension is not supported and will be removed",
-    module="openpyxl.worksheet._reader"
+    module="openpyxl.worksheet._read_only"
 )
 
-VALID_PREFIXES = ("ELI", "ES", "MME", "MSE")
+VALID_PREFIXES = ("CHEM", "ECE", "ELI", "ES", "MME", "MSE")
 
 def find_single_excel_file(folder: Path) -> Path | None:
     xlsx_files = list(folder.glob("*.xlsx"))
