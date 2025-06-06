@@ -125,6 +125,27 @@ class CEAB:
         scores = self.session.query(Data.score).filter(Data.measurementID == measurement_id).all()
         return [v[0] for v in scores] # Extract values from tuples before returning
 
+    def get_score_distribution_by_measurement_id(self, measurement_id: str) -> dict:
+        """Get the distribution of scores for a specific measurement ID.
+
+        Parameters
+        ----------
+        measurement_id : str
+            The measurement ID to fetch the score distribution for.
+
+        Returns
+        -------
+        dict
+            Dictionary with counts of each score (1-4) for the specified measurement ID.
+        """
+        scores = self.get_scores_by_measurement_id(measurement_id)
+        return {
+            '1': scores.count(1),
+            '2': scores.count(2),
+            '3': scores.count(3),
+            '4': scores.count(4)
+        }
+
     def get_summary_table_by_course(self) -> pd.DataFrame:
         """Get a summary table of the data aggregated by course.
 
@@ -301,6 +322,34 @@ class CEAB:
         plt.savefig(f"aggregate_scores_{academic_year.replace('/', '_')}.png", dpi=300, bbox_inches='tight')
         plt.close()
 
+    def get_measurement_ids_by_indicator(self, attribute: str, indicator: int,
+                                         year_in_program: int, academic_year: str) -> list:
+        """Get measurement IDs for a specific attribute and indicator, filtered by academic year.
+
+        Parameters
+        ----------
+        attribute : str
+            The attribute to filter by (e.g., 'KB', 'PA').
+        indicator : int
+            The indicator to filter by (e.g., 1, 2, 3).
+        year_in_program : int
+            The year in program to filter by (e.g., 1, 2, 3, 4).
+        academic_year : str
+            The academic year to filter by (e.g., '2023/24').
+
+        Returns
+        -------
+        list
+            List of measurement IDs that match the specified criteria.
+        """
+        measurements = self.session.query(Measurement).filter(
+            Measurement.attribute == attribute,
+            Measurement.indicator == indicator,
+            Measurement.course.has(Course.yearInProgram == year_in_program),
+            Measurement.course.has(Course.academicYear == academic_year)
+        ).all()
+
+        return [m.measurementID for m in measurements]
 
     def plot_score_distributions(self, score_df: pd.DataFrame, course_code: str):
         """
