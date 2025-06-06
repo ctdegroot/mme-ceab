@@ -3,9 +3,26 @@ from ceab.database import get_session
 from ceab.models import Instructor, Course, Measurement, Data
 from jinja2 import Environment, FileSystemLoader
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import subprocess
+from datetime import datetime
 
+
+all_attributes = {
+    "KB"  : [1, 2, 3, 4],
+    "PA"  : [1, 2, 3],
+    "I"   : [1, 2, 3],
+    "DES" : [1, 2, 3, 4],
+    "ET"  : [1, 2, 3],
+    "ITW" : [1, 2, 3],
+    "CS"  : [1, 2, 3],
+    "PR"  : [1, 2, 3],
+    "IES" : [1, 2, 3],
+    "EE"  : [1, 2, 3],
+    "EPM" : [1, 2, 3, 4],
+    "LL"  : [1, 2]
+}
 
 # Expected ranges for each score
 expected_ranges = {
@@ -158,6 +175,133 @@ class CEAB:
         # Convert to a pandas DataFrame
         return pd.DataFrame(data_list)
     
+    def get_aggregate_scores_by_year(self, attribute: str, indicator: int, 
+                                     academic_year: str, year_in_program: int) -> list:
+        """Get aggregate score distributions for a specific attribute and indicator, grouped by academic year.
+
+        Parameters
+        ----------
+        attribute : str
+            The attribute to filter by (e.g., 'KB', 'PA').
+        indicator : int
+            The indicator to filter by (e.g., 1, 2, 3).
+        academic_year : str
+            The academic year to filter by (e.g., '2023/24').
+        year_in_program : int
+            The year in program to filter by (e.g., 1, 2, 3, 4).
+
+        Returns
+        -------
+        list
+            List containing the fractional distribution of scores (1-4) for the specified attribute and indicator,
+            grouped by academic year.
+        """
+        # Query measurements matching the attribute and indicator
+        measurements = self.session.query(Measurement).filter(
+            Measurement.attribute == attribute,
+            Measurement.indicator == indicator,
+            Measurement.course.has(Course.academicYear == academic_year),
+            Measurement.course.has(Course.yearInProgram == year_in_program)
+        ).all()
+
+        if not measurements:
+            return None
+        
+        # Aggregate scores for each measurement
+        score_distribution = {
+            '1': 0,
+            '2': 0,
+            '3': 0,
+            '4': 0
+        }
+        for measurement in measurements:
+            scores = self.get_scores_by_measurement_id(measurement.measurementID)
+            score_distribution['1'] += scores.count(1)
+            score_distribution['2'] += scores.count(2)
+            score_distribution['3'] += scores.count(3)
+            score_distribution['4'] += scores.count(4)
+
+        # Convert counts to fractions
+        total_scores = sum(score_distribution.values())
+        if total_scores == 0:
+            return {'1': 0, '2': 0, '3': 0, '4': 0
+            # Should print some kind of warning here
+        }
+        score_distribution['1'] /= total_scores
+        score_distribution['2'] /= total_scores
+        score_distribution['3'] /= total_scores
+        score_distribution['4'] /= total_scores
+
+        return score_distribution
+    
+    def plot_aggregate_scores(self, academic_year: str):
+        """Plot aggregate scores for all attributes and indicators, grouped by academic year.
+
+        Parameters
+        ----------
+        academic_year : str
+            The academic year to filter by (e.g., '2023/24').
+        """
+        attr_ind_pairs = [(attr, ind) for attr, inds in all_attributes.items() for ind in inds]
+        pair_labels = [f"{attr}{ind}" for attr, ind in attr_ind_pairs]
+        x = np.arange(len(attr_ind_pairs))
+
+        score_labels = ['1', '2', '3', '4']
+        colors = colors = ['#4D4D4D', '#969696', '#92C5DE', '#0571B0']  # Colourblind-safe gradient
+
+        fig, axes = plt.subplots(4, 1, figsize=(len(attr_ind_pairs) * 0.6, 8), sharex=True)
+        fig.subplots_adjust(hspace=0.4)
+
+        # Add invisible dummy bars to ensure legend is always correct
+        for i, score in enumerate(score_labels):
+            axes[0].bar(0, 0, color=colors[i], label=f"{score} - {score_names[score]}")
+
+        for year_in_program in range(1, 5):
+            ax = axes[year_in_program - 1]
+
+            valid_x = []
+            all_heights = {score: [] for score in score_labels}
+
+            for j, (attr, ind) in enumerate(attr_ind_pairs):
+                dist = self.get_aggregate_scores_by_year(attr, ind, academic_year, year_in_program)
+                if dist is not None:
+                    valid_x.append(j)
+                    for score in score_labels:
+                        all_heights[score].append(dist[score])
+
+            # Now plot stacked bars for valid entries only
+            bottoms = np.zeros(len(valid_x))
+            for i, score in enumerate(score_labels):
+                heights = all_heights[score]
+                ax.bar(valid_x, heights, bottom=bottoms, color=colors[i], label=f"Score {score}" if year_in_program == 4 else None)
+                bottoms += heights
+
+            ax.set_ylabel(f"Year {year_in_program}", rotation=90, labelpad=30, va='center', fontsize=14)
+            ax.set_ylim(0, 1)
+            ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
+            ax.grid(axis='y', linestyle='--', alpha=0.3)
+            ax.tick_params(axis='x', which='both', bottom=False, labelbottom=(year_in_program == 4))
+
+        axes[-1].set_xticks(x)
+        axes[-1].set_xticklabels(pair_labels, rotation=45, ha='center', fontsize=14, fontweight='bold')
+        axes[-1].set_xlim(-0.5, len(attr_ind_pairs) - 0.5)
+
+        fig.suptitle(f"Score Distributions by Year in Program for Academic Year {academic_year}", fontsize=18)
+        
+        fig.legend(
+            labels=[f"{s} - {score_names[s]}" for s in score_labels],
+            loc='lower center',
+            ncol=4,
+            bbox_to_anchor=(0.5, -0.05),
+            frameon=True,
+            prop={'size': 14, 'weight': 'bold'}
+        )
+        plt.tight_layout()
+
+        plt.savefig(f"aggregate_scores_{academic_year.replace('/', '_')}.png", dpi=300, bbox_inches='tight')
+        plt.close()
+
+
     def plot_score_distributions(self, score_df: pd.DataFrame, course_code: str):
         """
         Plots score distributions as fractions for each unique attribute/indicator,
@@ -316,8 +460,10 @@ class CEAB:
                     "deliverableName": m.deliverableName,
                     "date": m.date.strftime("%Y-%m-%d"),
                     "academicYear": m.course.academicYear,
+                    "instructor": f"{m.course.instructor.firstName} {m.course.instructor.lastName}",
                     "notes": notes
                 }
+
         print(f"Attribute-Indicator data: {attr_ind_data}")
 
         # Set up Jinja2 environment for report template
