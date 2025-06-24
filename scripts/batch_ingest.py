@@ -1,3 +1,6 @@
+import sys
+print(sys.path)
+
 import argparse
 from pathlib import Path
 import warnings
