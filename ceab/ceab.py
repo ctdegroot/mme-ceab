@@ -255,13 +255,15 @@ class CEAB:
 
         return score_distribution
     
-    def plot_aggregate_scores(self, academic_year: str):
+    def plot_aggregate_scores(self, academic_year: str, destination: str = ".") -> None:
         """Plot aggregate scores for all attributes and indicators, grouped by academic year.
 
         Parameters
         ----------
         academic_year : str
             The academic year to filter by (e.g., '2023/24').
+        destination : str
+            The directory where the plot will be saved. Defaults to the current directory.
         """
         attr_ind_pairs = [(attr, ind) for attr, inds in all_attributes.items() for ind in inds]
         pair_labels = [f"{attr}{ind}" for attr, ind in attr_ind_pairs]
@@ -319,7 +321,7 @@ class CEAB:
         )
         plt.tight_layout()
 
-        plt.savefig(f"aggregate_scores_{academic_year.replace('/', '_')}.png", dpi=300, bbox_inches='tight')
+        plt.savefig(f"{destination}/aggregate_scores_{academic_year.replace('/', '_')}.png", dpi=300, bbox_inches='tight')
         plt.close()
 
     def get_measurement_ids_by_indicator(self, attribute: str, indicator: int,
