@@ -49,11 +49,11 @@
         {% for data in attr_ind_data[attr_ind_pair[0] ~ attr_ind_pair[1]].values() %}
         \item Measurement {{ loop.index }}:
         \begin{itemize}
-            \item Instructor: {{ data['instructor'] }}
-            \item Academic Year: {{ data['academicYear'] }}
-            \item Deliverable Type: {{ data['deliverableType'] }}
-            \item Deliverable Name: {{ data['deliverableName'] }}
-            \item Measurement Date: {{ data['date'] }}
+            \item Instructor: {{ data['instructor']|escape_latex }}
+            \item Academic Year: {{ data['academicYear']|escape_latex }}
+            \item Deliverable Type: {{ data['deliverableType']|escape_latex }}
+            \item Deliverable Name: {{ data['deliverableName']|escape_latex }}
+            \item Measurement Date: {{ data['date']|escape_latex }}
         \end{itemize}
         {% endfor %}
     \end{itemize}
