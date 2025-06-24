@@ -408,6 +408,9 @@ class CEAB:
         course_code : str
             The course code to use in the plot filenames.
         """
+        # Define a colourblind-safe colour scheme for the scores
+        COLORS = ['#332288', '#88CCEE', '#44AA99', '#117733']  # Blue, light blue, teal, green
+
         # Group by attribute-indicator combinations
         unique_combos = score_df[['attribute', 'indicator']].drop_duplicates()
 
@@ -416,6 +419,34 @@ class CEAB:
             ind = row['indicator']
 
             subset = score_df[(score_df['attribute'] == attr) & (score_df['indicator'] == ind)]
+
+            # Extract and sort academic years by starting year
+            subset = subset.assign(
+                year_start=subset['academic_year'].str.extract(r'^(\d{4})').astype(int)
+            ).sort_values(by='year_start')
+
+            # Keep only the 4 most recent academic years
+            # Step 1: Add a numeric year key
+            subset = subset.assign(
+                year_start=subset['academic_year'].str.extract(r'^(\d{4})').astype(int)
+            )
+
+            # Step 2: Get the 4 most recent unique academic years
+            recent_years = (
+                subset[['academic_year', 'year_start']]
+                .drop_duplicates()
+                .sort_values('year_start', ascending=False)
+                .head(4)
+                .sort_values('year_start')  # for left-to-right plotting
+            )['academic_year'].tolist()
+
+            # Step 3: Filter the full dataset to those 4 years
+            subset = subset[subset['academic_year'].isin(recent_years)]
+
+            # Step 4: Create color map
+            color_map = {
+                year: COLORS[i] for i, year in enumerate(recent_years)
+            }
 
             score_labels = ['1', '2', '3', '4']
             bar_width = 0.2
@@ -426,32 +457,27 @@ class CEAB:
             # Draw expected ranges as translucent rectangles
             for i, label in enumerate(score_labels):
                 low, high = expected_ranges[label]
-                # Draw a horizontal band for the expected range
                 plt.axhspan(
                     low, high,
-                    xmin=(i + 0.05) / len(score_labels),  # Start just inside this bar group
-                    xmax=(i + 0.95) / len(score_labels),  # End just before the next
+                    xmin=(i + 0.05) / len(score_labels),
+                    xmax=(i + 0.95) / len(score_labels),
                     color='gray', alpha=0.15, zorder=0
                 )
 
-            for i, (_, year_row) in enumerate(subset.iterrows()):
-                counts = [
-                    year_row['n_score_1'],
-                    year_row['n_score_2'],
-                    year_row['n_score_3'],
-                    year_row['n_score_4']
-                ]
-                total = sum(counts) or 1  # Prevent division by zero
+            for i, year in enumerate(recent_years):
+                year_data = subset[subset['academic_year'] == year]
+                counts = year_data[['n_score_1', 'n_score_2', 'n_score_3', 'n_score_4']].sum().tolist()
+                total = sum(counts) or 1
                 fractions = [c / total for c in counts]
                 plt.bar(
                     [pos + i * bar_width for pos in x],
                     fractions,
                     width=bar_width,
-                    label=year_row['academic_year']
+                    color=color_map[year],
+                    label=year
                 )
 
-            # Center the x-ticks in the middle of each grouped bar cluster
-            num_years = len(subset)
+            num_years = len(recent_years)
             group_width = num_years * bar_width
             tick_positions = [pos + (group_width - bar_width) / 2 for pos in x]
             plt.xticks(tick_positions, score_labels)
