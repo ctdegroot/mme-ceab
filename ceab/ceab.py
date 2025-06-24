@@ -490,7 +490,7 @@ class CEAB:
             plt.savefig(f"{course_code.replace(' ', '_')}_{attr}{ind}.png")
             plt.close()
 
-    def generate_course_report(self, course_code: str, academic_year: str):
+    def generate_course_report(self, course_code: str, academic_year: str) -> str:
         """Generate a report for a specific course.
 
         Parameters
@@ -499,6 +499,11 @@ class CEAB:
             The course code to generate the report for.
         academic_year : str
             The academic year for which the report is generated.
+
+        Returns
+        -------
+        str
+            The file name of the generated PDF report.
         """
         # Generate the course prefix, number, and suffix from the course code.
         # The course code must be in the format "XYZ 1234A" where XYZ is the prefix, 
@@ -562,22 +567,25 @@ class CEAB:
                 # Calculate the fractions of scores
                 scores = self.get_scores_by_measurement_id(m.measurementID)
                 n1, n2, n3, n4 = scores.count(1), scores.count(2), scores.count(3), scores.count(4)
-                n1_frac = n1 / len(scores)
-                n2_frac = n2 / len(scores)
-                n3_frac = n3 / len(scores)
-                n4_frac = n4 / len(scores)
+                if len(scores) > 0:
+                    n1_frac = n1 / len(scores)
+                    n2_frac = n2 / len(scores)
+                    n3_frac = n3 / len(scores)
+                    n4_frac = n4 / len(scores)
+                else:
+                    n1_frac = n2_frac = n3_frac = n4_frac = 0.0
 
                 # Ensure the fractions are within expected ranges for measurements in the specified academic year
                 notes = []
                 if m.course.academicYear == academic_year:
                     if not (expected_ranges['1'][0] <= n1_frac <= expected_ranges['1'][1]):
-                        notes.append(f"{n1_frac*100:.1f}\% of students received a score of 1 ({score_names['1']}); this is outside the normal range of {expected_ranges['1'][0]*100:.0f}-{expected_ranges['1'][1]*100:.0f}\%.")
+                        notes.append(f"{n1_frac*100:.1f}% of students received a score of 1 ({score_names['1']}) on ``{m.deliverableName}''; this is outside the normal range of {expected_ranges['1'][0]*100:.0f}-{expected_ranges['1'][1]*100:.0f}%.")
                     if not (expected_ranges['2'][0] <= n2_frac <= expected_ranges['2'][1]):
-                        notes.append(f"{n2_frac*100:.1f}\% of students received a score of 2 ({score_names['2']}); this is outside the normal range of {expected_ranges['2'][0]*100:.0f}-{expected_ranges['2'][1]*100:.0f}\%.")
+                        notes.append(f"{n2_frac*100:.1f}% of students received a score of 2 ({score_names['2']}) on ``{m.deliverableName}''; this is outside the normal range of {expected_ranges['2'][0]*100:.0f}-{expected_ranges['2'][1]*100:.0f}%.")
                     if not (expected_ranges['3'][0] <= n3_frac <= expected_ranges['3'][1]):
-                        notes.append(f"{n3_frac*100:.1f}\% of students received a score of 3 ({score_names['3']}); this is outside the normal range of {expected_ranges['3'][0]*100:.0f}-{expected_ranges['3'][1]*100:.0f}\%.")
+                        notes.append(f"{n3_frac*100:.1f}% of students received a score of 3 ({score_names['3']}) on ``{m.deliverableName}''; this is outside the normal range of {expected_ranges['3'][0]*100:.0f}-{expected_ranges['3'][1]*100:.0f}%.")
                     if not (expected_ranges['4'][0] <= n4_frac <= expected_ranges['4'][1]):
-                        notes.append(f"{n4_frac*100:.1f}\% of students received a score of 4 ({score_names['4']}); this is outside the normal range of {expected_ranges['4'][0]*100:.0f}-{expected_ranges['4'][1]*100:.0f}\%.")
+                        notes.append(f"{n4_frac*100:.1f}% of students received a score of 4 ({score_names['4']}) on ``{m.deliverableName}''; this is outside the normal range of {expected_ranges['4'][0]*100:.0f}-{expected_ranges['4'][1]*100:.0f}%.")
 
                 attr_ind_data[f"{attr}{ind}"][m.measurementID] = {
                     "deliverableType": m.deliverableType,
@@ -595,11 +603,6 @@ class CEAB:
                         key=lambda item: int(item[1]['academicYear'].split('/')[0])
                     )
                 )
-
-            # If there is no measurement data for the specified academic year, delete this attribute-indicator pair.
-            #if not any(d["academicYear"] == academic_year for d in attr_ind_data[f"{attr}{ind}"].values()):
-            #    del attr_ind_data[f"{attr}{ind}"]
-            #    del attr_ind_pairs[attr_ind_pairs.index((attr, ind))]
 
         # Filter out attribute-indicator pairs that were not measured in the specified academic year.
         attr_ind_data = {
@@ -629,15 +632,19 @@ class CEAB:
         with open(f"{file_name}.tex", "w") as f:
             f.write(rendered_tex)
 
-        print(f"LaTeX file generated: {file_name}.tex")
-
         # Compile LaTeX to PDF (do twice to ensure all references are resolved)
         for _ in range(2):
             try:
-                subprocess.run(["pdflatex", "-interaction=nonstopmode", f"{file_name}.tex"], check=True)
+                result = subprocess.run(
+                    ["pdflatex", "-interaction=nonstopmode", f"{file_name}.tex"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    check=True
+                )
             except subprocess.CalledProcessError as e:
-                print("Error during LaTeX compilation:", e)
-                return
+                print(f"❌ LaTeX compilation failed for {file_name}.tex:")
+                print(e.stderr.decode(errors='ignore'))
+                return None
             
         # Remove the auxiliary files generated by LaTeX
         for ext in ['.aux', '.log', '.out', '.tex']:
@@ -649,6 +656,20 @@ class CEAB:
                 pass
             except Exception as e:
                 print(f"Error removing {path}:", e)
+
+        # Remove the generated .png files from the score distributions
+        for attr, ind in attr_ind_pairs:
+            png_file = f"{course_code.replace(' ', '_')}_{attr}{ind}.png"
+            try:
+                os.remove(png_file)
+            except FileNotFoundError:
+                # No problem — file just doesn't exist
+                pass
+            except Exception as e:
+                print(f"Error removing {png_file}:", e)
+
+        # Return the file name of the generated PDF report
+        return f"{file_name}.pdf"
 
     def close(self):
         """Close the database session."""

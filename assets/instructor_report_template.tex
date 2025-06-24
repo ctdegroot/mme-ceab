@@ -70,7 +70,7 @@
     {% for data in attr_ind_data[attr_ind_pair[0] ~ attr_ind_pair[1]].values() %}
         {% if data['notes'] %}
             {% for note in data['notes'] %}
-                \item {{ note }}
+                \item {{ note|escape_latex }}
             {% endfor %}
         {% elif data['academicYear'] == academic_year%}
             \item No items to address.
