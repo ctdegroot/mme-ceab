@@ -445,14 +445,12 @@ class CEAB:
         course_ids = self.get_row_IDs_matching_criteria("course", {"prefix": prefix, "number": number, "suffix": suffix})
         if not course_ids:
             raise ValueError(f"No course found with code: {course_code}")
-        print(f"Course IDs: {course_ids}")
         
         # Get all of the measurement data that match the courseIDs.
         measurements = self.session.query(Measurement).filter(Measurement.courseID.in_(course_ids)).all()
 
         # Get all of the unique combinations of attribute and indicator in the measurements.
         attr_ind_pairs = sorted({(m.attribute, m.indicator) for m in measurements})
-        print(f"Attribute-Indicator pairs: {attr_ind_pairs}")
 
         # Get the score distributions and metadata for all of the measurementIDs.
         rows = []
@@ -470,6 +468,11 @@ class CEAB:
                 "n_score_4": n4
             })
         scores = pd.DataFrame(rows)
+
+        # Sort the data by academic year (which is a string like '2023/24')
+        scores = scores.assign(
+            sort_key=scores['academic_year'].str.extract(r'^(\d{4})').astype(int)
+        ).sort_values(by='sort_key').drop(columns='sort_key')
 
         # Plot the score distributions for each attribute-indicator pair
         self.plot_score_distributions(scores, course_code)
@@ -495,16 +498,17 @@ class CEAB:
                 n3_frac = n3 / len(scores)
                 n4_frac = n4 / len(scores)
 
-                # Ensure the fractions are within expected ranges
+                # Ensure the fractions are within expected ranges for measurements in the specified academic year
                 notes = []
-                if not (expected_ranges['1'][0] <= n1_frac <= expected_ranges['1'][1]):
-                    notes.append(f"{n1_frac*100:.1f}\% of students received a score of 1 ({score_names['1']}); this is outside the normal range of {expected_ranges['1'][0]*100:.0f}-{expected_ranges['1'][1]*100:.0f}\%.")
-                if not (expected_ranges['2'][0] <= n2_frac <= expected_ranges['2'][1]):
-                    notes.append(f"{n2_frac*100:.1f}\% of students received a score of 2 ({score_names['2']}); this is outside the normal range of {expected_ranges['2'][0]*100:.0f}-{expected_ranges['2'][1]*100:.0f}\%.")
-                if not (expected_ranges['3'][0] <= n3_frac <= expected_ranges['3'][1]):
-                    notes.append(f"{n3_frac*100:.1f}\% of students received a score of 3 ({score_names['3']}); this is outside the normal range of {expected_ranges['3'][0]*100:.0f}-{expected_ranges['3'][1]*100:.0f}\%.")
-                if not (expected_ranges['4'][0] <= n4_frac <= expected_ranges['4'][1]):
-                    notes.append(f"{n4_frac*100:.1f}\% of students received a score of 4 ({score_names['4']}); this is outside the normal range of {expected_ranges['4'][0]*100:.0f}-{expected_ranges['4'][1]*100:.0f}\%.")
+                if m.course.academicYear == academic_year:
+                    if not (expected_ranges['1'][0] <= n1_frac <= expected_ranges['1'][1]):
+                        notes.append(f"{n1_frac*100:.1f}\% of students received a score of 1 ({score_names['1']}); this is outside the normal range of {expected_ranges['1'][0]*100:.0f}-{expected_ranges['1'][1]*100:.0f}\%.")
+                    if not (expected_ranges['2'][0] <= n2_frac <= expected_ranges['2'][1]):
+                        notes.append(f"{n2_frac*100:.1f}\% of students received a score of 2 ({score_names['2']}); this is outside the normal range of {expected_ranges['2'][0]*100:.0f}-{expected_ranges['2'][1]*100:.0f}\%.")
+                    if not (expected_ranges['3'][0] <= n3_frac <= expected_ranges['3'][1]):
+                        notes.append(f"{n3_frac*100:.1f}\% of students received a score of 3 ({score_names['3']}); this is outside the normal range of {expected_ranges['3'][0]*100:.0f}-{expected_ranges['3'][1]*100:.0f}\%.")
+                    if not (expected_ranges['4'][0] <= n4_frac <= expected_ranges['4'][1]):
+                        notes.append(f"{n4_frac*100:.1f}\% of students received a score of 4 ({score_names['4']}); this is outside the normal range of {expected_ranges['4'][0]*100:.0f}-{expected_ranges['4'][1]*100:.0f}\%.")
 
                 attr_ind_data[f"{attr}{ind}"][m.measurementID] = {
                     "deliverableType": m.deliverableType,
@@ -514,6 +518,14 @@ class CEAB:
                     "instructor": f"{m.course.instructor.firstName} {m.course.instructor.lastName}",
                     "notes": notes
                 }
+
+                # Sort the data by academic year, which is a string like '2023/24'
+                attr_ind_data[f"{attr}{ind}"] = dict(
+                    sorted(
+                        attr_ind_data[f"{attr}{ind}"].items(),
+                        key=lambda item: int(item[1]['academicYear'].split('/')[0])
+                    )
+                )
 
         print(f"Attribute-Indicator data: {attr_ind_data}")
 
@@ -534,12 +546,13 @@ class CEAB:
 
         print(f"LaTeX file generated: {file_name}.tex")
 
-        # Compile LaTeX to PDF
-        try:
-            subprocess.run(["pdflatex", "-interaction=nonstopmode", f"{file_name}.tex"], check=True)
-            print(f"PDF generated: {file_name}.pdf")
-        except subprocess.CalledProcessError as e:
-            print("Error during LaTeX compilation:", e)
+        # Compile LaTeX to PDF (do twice to ensure all references are resolved)
+        for _ in range(2):
+            try:
+                subprocess.run(["pdflatex", "-interaction=nonstopmode", f"{file_name}.tex"], check=True)
+            except subprocess.CalledProcessError as e:
+                print("Error during LaTeX compilation:", e)
+                return
 
     def close(self):
         """Close the database session."""

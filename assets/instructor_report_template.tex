@@ -72,9 +72,9 @@
             {% for note in data['notes'] %}
                 \item {{ note }}
             {% endfor %}
-        {% else %}
+        {% elif data['academicYear'] == academic_year%}
             \item No items to address.
-        {% endif %}  
+        {% endif %}
     {% endfor %}
     \end{itemize}
 
