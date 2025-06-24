@@ -9,6 +9,11 @@ warnings.filterwarnings(
     message="Data Validation extension is not supported and will be removed",
     module="openpyxl.worksheet._read_only"
 )
+warnings.filterwarnings(
+    "ignore",
+    message="Data Validation extension is not supported and will be removed",
+    module="openpyxl.worksheet._reader"
+)
 
 VALID_PREFIXES = ("CHEM", "ECE", "ELI", "ES", "MME", "MSE")
 
