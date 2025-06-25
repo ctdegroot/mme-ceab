@@ -490,21 +490,28 @@ class CEAB:
             plt.savefig(f"{course_code.replace(' ', '_')}_{attr}{ind}.png")
             plt.close()
 
-    def generate_course_report(self, course_code: str, academic_year: str) -> str:
-        """Generate a report for a specific course.
-
+    def get_course_report_data(self, course_code: str, academic_year: str):
+        """Get the data needed to generate a course report for a specific course code and academic year.
+        
         Parameters
         ----------
         course_code : str
-            The course code to generate the report for.
+            The course code to generate the report for, in the format "XYZ 1234A".
         academic_year : str
-            The academic year for which the report is generated.
-
+            The academic year to filter the measurements by, in the format "2023/24".
+        
         Returns
         -------
-        str
-            The file name of the generated PDF report.
+        attr_ind_pairs : list of tuple of (str, str)
+            A list of (attribute, indicator) pairs that were measured in the specified academic year.
+
+        attr_ind_data : dict of {str: dict of {int: dict}}
+            A nested dictionary containing metadata for each measurement.
+            The outer key is the attribute-indicator code (e.g., 'EE3').
+            The inner keys are measurementIDs.
+            The innermost dictionary contains metadata for each measurement (e.g., deliverable type, name, date, instructor, and notes).
         """
+
         # Generate the course prefix, number, and suffix from the course code.
         # The course code must be in the format "XYZ 1234A" where XYZ is the prefix, 
         # 1234 is the number, and A is the suffix.
@@ -615,6 +622,27 @@ class CEAB:
             (attr, ind) for (attr, ind) in attr_ind_pairs
             if f"{attr}{ind}" in attr_ind_data
         ]
+
+        return attr_ind_pairs, attr_ind_data
+
+    def generate_course_report(self, course_code: str, academic_year: str) -> str:
+        """Generate a report for a specific course.
+
+        Parameters
+        ----------
+        course_code : str
+            The course code to generate the report for.
+        academic_year : str
+            The academic year for which the report is generated.
+
+        Returns
+        -------
+        str
+            The file name of the generated PDF report.
+        """
+
+        # Get the data needed for the course report.
+        attr_ind_pairs, attr_ind_data = self.get_course_report_data(course_code, academic_year)
 
         # Set up Jinja2 environment for report template
         env = Environment(loader=FileSystemLoader("."))
