@@ -14,7 +14,7 @@ class Instructor(Base):
 class Course(Base):
     __tablename__ = "courses"
     courseID = Column(String, primary_key=True)
-    instructorID = Column(String, ForeignKey("instructors.instructorID"))
+    instructorID = Column(String, ForeignKey("instructors.instructorID", ondelete="CASCADE"))
     prefix = Column(String, nullable=False)
     number = Column(Integer, nullable=False)
     suffix = Column(String, nullable=True)
@@ -50,7 +50,7 @@ class Course(Base):
 class Measurement(Base):
     __tablename__ = "measurements"
     measurementID = Column(String, primary_key=True)
-    courseID = Column(String, ForeignKey("courses.courseID"))
+    courseID = Column(String, ForeignKey("courses.courseID", ondelete="CASCADE"))
     attribute = Column(String, nullable=False)
     indicator = Column(Integer, nullable=False)
     deliverableType = Column(String, nullable=False)
@@ -78,7 +78,7 @@ class Measurement(Base):
 
 class Data(Base):
     __tablename__ = "data"
-    measurementID = Column(String, ForeignKey("measurements.measurementID"))
+    measurementID = Column(String, ForeignKey("measurements.measurementID", ondelete="CASCADE"))
     studentID = Column(String, nullable=False)
     score = Column(Integer)
 

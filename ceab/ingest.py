@@ -4,7 +4,6 @@ from sqlalchemy.exc import IntegrityError
 from ceab.database import get_session, init_db
 from ceab.models import Instructor, Course, Measurement, Data
 
-
 class Sheets():
     """Class with static variables for the Excel sheet names."""
     instructor = "1 - Instructor"
@@ -193,6 +192,22 @@ def insert_into_db(data_dict, overwrite=False):
                 print("⚠️ Invalid 'score' values found:")
                 print(invalid_scores)
                 raise ValueError("Invalid 'score' values found. Scores must be between 1 and 4.")
+            
+        # Get all courseIDs and measurementIDs in the new data
+        new_course_ids = set(data_dict["course"]["courseID"])
+        new_measurement_ids = set(data_dict["measurement"]["measurementID"])
+
+        for course_id in new_course_ids:
+            # Find old measurements for this course not in the new data
+            old_measurements = (
+                session.query(Measurement)
+                .filter(Measurement.courseID == course_id)
+                .filter(~Measurement.measurementID.in_(new_measurement_ids))
+                .all()
+            )
+            for old_m in old_measurements:
+                session.delete(old_m)
+        session.commit()
 
         # Instructors, Courses, Measurements (use merge for upserts)
         for _, row in data_dict["instructor"].iterrows():
