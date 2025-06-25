@@ -23,11 +23,18 @@ VALID_PREFIXES = ("CHEM", "ECE", "ELI", "ES", "MME", "MSE")
 
 def find_single_excel_file(folder: Path) -> Path | None:
     xlsx_files = list(folder.glob("*.xlsx"))
+    
+    # Exclude any files that start with "narrative_*" since these are not data files.
+    xlsx_files = [f for f in xlsx_files if not f.name.startswith("narrative_")]
+
+    # Check for multiple Excel files or no files at all. 
     if len(xlsx_files) == 0:
         print(f"⚠️  No Excel file found in {folder.name}. Skipping.")
         return None
     elif len(xlsx_files) > 1:
         raise ValueError(f"Multiple Excel files found in {folder.name}: {[f.name for f in xlsx_files]}")
+    
+    # Return the single Excel file found
     return xlsx_files[0]
 
 def batch_ingest(parent_dir: Path):

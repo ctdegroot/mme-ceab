@@ -5,7 +5,9 @@ from jinja2 import Environment, FileSystemLoader
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import xlwings as xw
 import subprocess
+import shutil
 from datetime import datetime
 import os
 import re
@@ -490,37 +492,43 @@ class CEAB:
             plt.savefig(f"{course_code.replace(' ', '_')}_{attr}{ind}.png")
             plt.close()
 
-    def get_course_report_data(self, course_code: str, academic_year: str):
-        """Get the data needed to generate a course report for a specific course code and academic year.
-        
+    def get_course_prefix_number_suffix(self, course_code: str) -> tuple:
+        """Extract the prefix, number, and suffix from a course code.
+
         Parameters
         ----------
         course_code : str
-            The course code to generate the report for, in the format "XYZ 1234A".
-        academic_year : str
-            The academic year to filter the measurements by, in the format "2023/24".
-        
+            The course code to extract from, in the format "XYZ 1234A".
+
         Returns
         -------
-        attr_ind_pairs : list of tuple of (str, str)
-            A list of (attribute, indicator) pairs that were measured in the specified academic year.
-
-        attr_ind_data : dict of {str: dict of {int: dict}}
-            A nested dictionary containing metadata for each measurement.
-            The outer key is the attribute-indicator code (e.g., 'EE3').
-            The inner keys are measurementIDs.
-            The innermost dictionary contains metadata for each measurement (e.g., deliverable type, name, date, instructor, and notes).
+        tuple
+            A tuple containing the prefix (str), number (int), and suffix (str).
         """
-
         # Generate the course prefix, number, and suffix from the course code.
         # The course code must be in the format "XYZ 1234A" where XYZ is the prefix, 
         # 1234 is the number, and A is the suffix.
-        course_parts = course_code.split()
-        if len(course_parts) != 2:
+        parts = course_code.split()
+        if len(parts) != 2:
             raise ValueError("Invalid course code format. Expected format: 'XYZ 1234A'.")
-        prefix = course_parts[0]
-        number = int(course_parts[1][0:4] if len(course_parts[1]) > 4 else course_parts[1])
-        suffix = course_parts[1][4:] if len(course_parts[1]) > 4 else "none"
+        
+        prefix = parts[0]
+        number = int(parts[1][0:4] if len(parts[1]) > 4 else parts[1])
+        suffix = parts[1][4:] if len(parts[1]) > 4 else "none"
+        
+        return prefix, number, suffix
+    
+    def plot_course_scores(self, course_code: str, academic_year: str) -> None:
+        """Plot the score distributions for a specific course code and academic year.
+
+        Parameters
+        ----------
+        course_code : str
+            The course code to plot scores for, in the format "XYZ 1234A".
+        academic_year : str
+            The academic year to filter the measurements by, in the format "2023/24".
+        """
+        prefix, number, suffix = self.get_course_prefix_number_suffix(course_code)
 
         # Get all of the courseIDs that match the prefix, number, and suffix.
         course_ids = self.get_row_IDs_matching_criteria("course", {"prefix": prefix, "number": number, "suffix": suffix})
@@ -529,9 +537,6 @@ class CEAB:
         
         # Get all of the measurement data that match the courseIDs.
         measurements = self.session.query(Measurement).filter(Measurement.courseID.in_(course_ids)).all()
-
-        # Get all of the unique combinations of attribute and indicator in the measurements.
-        attr_ind_pairs = sorted({(m.attribute, m.indicator) for m in measurements})
 
         # Get the score distributions and metadata for all of the measurementIDs.
         rows = []
@@ -557,6 +562,40 @@ class CEAB:
 
         # Plot the score distributions for each attribute-indicator pair
         self.plot_score_distributions(scores, course_code)
+
+    def get_course_report_data(self, course_code: str, academic_year: str) -> tuple:
+        """Get the data needed to generate a course report for a specific course code and academic year.
+        
+        Parameters
+        ----------
+        course_code : str
+            The course code to generate the report for, in the format "XYZ 1234A".
+        academic_year : str
+            The academic year to filter the measurements by, in the format "2023/24".
+        
+        Returns
+        -------
+        attr_ind_pairs : list of tuple of (str, str)
+            A list of (attribute, indicator) pairs that were measured in the specified academic year.
+
+        attr_ind_data : dict of {str: dict of {int: dict}}
+            A nested dictionary containing metadata for each measurement.
+            The outer key is the attribute-indicator code (e.g., 'EE3').
+            The inner keys are measurementIDs.
+            The innermost dictionary contains metadata for each measurement (e.g., deliverable type, name, date, instructor, and notes).
+        """
+        prefix, number, suffix = self.get_course_prefix_number_suffix(course_code)
+
+        # Get all of the courseIDs that match the prefix, number, and suffix.
+        course_ids = self.get_row_IDs_matching_criteria("course", {"prefix": prefix, "number": number, "suffix": suffix})
+        if not course_ids:
+            raise ValueError(f"No course found with code: {course_code}")
+        
+        # Get all of the measurement data that match the courseIDs.
+        measurements = self.session.query(Measurement).filter(Measurement.courseID.in_(course_ids)).all()
+
+        # Get all of the unique combinations of attribute and indicator in the measurements.
+        attr_ind_pairs = sorted({(m.attribute, m.indicator) for m in measurements})
 
         # Collect metadata for each attribute-indicator pair
         attr_ind_data = {}
@@ -698,6 +737,94 @@ class CEAB:
 
         # Return the file name of the generated PDF report
         return f"{file_name}.pdf"
+
+    def generate_course_feedback_form(self, course_code: str, academic_year: str) -> str:
+        """Generate a feedback form for a specific course.
+
+        Parameters
+        ----------
+        course_code : str
+            The course code to generate the report for.
+        academic_year : str
+            The academic year for which the report is generated.
+
+        Returns
+        -------
+        str
+            The file name of the generated Excel feedback form.
+        """
+        # Set Excel to run in the background.
+        app = xw.App(visible=False)
+        app.display_alerts = False
+        app.screen_updating = False
+
+        # Generate file name for the feedback form.
+        file_name = f"narrative_{course_code.replace(' ', '_')}.xlsx"
+
+        # Make a copy of the template feedback form.
+        shutil.copy("assets/Narrative_Template.xlsx", file_name)
+
+        # Load the template Excel file and access the required sheet.
+        wb = xw.Book(file_name)
+        ws = wb.sheets["Narrative"]
+
+        # Get the course information.
+        prefix, number, suffix = self.get_course_prefix_number_suffix(course_code)
+        course_id = self.get_row_IDs_matching_criteria("course", {"prefix": prefix, "number": number, "suffix": suffix, "academicYear": academic_year})[0]
+        instructor_first_name = self.session.query(Instructor.firstName).join(Course).filter(Course.courseID == course_id).scalar()
+        instructor_last_name = self.session.query(Instructor.lastName).join(Course).filter(Course.courseID == course_id).scalar()
+
+        # Input the course information into the template.
+        ws.range("C2").value = instructor_first_name
+        ws.range("C3").value = instructor_last_name
+        ws.range("C4").value = course_code
+        ws.range("C5").value = academic_year
+
+        # Get the data needed for the feedback from.
+        attr_ind_pairs, attr_ind_data = self.get_course_report_data(course_code, academic_year)
+
+        # Fill in the feedback form with the attribute-indicator pairs and their metadata.
+        row = 11  # Start filling from row 11
+        for attr, ind in attr_ind_pairs:
+            # Fill in the attribute/indicator pair.
+            ws.range(f"B{row}").value = f"{attr}{ind}"
+            
+            # Get the metadata for this attribute-indicator pair
+            metadata = attr_ind_data[f"{attr}{ind}"]
+            
+            # Generate the observations string for this attribute-indicator pair.
+            observations = ""
+            for _, data in metadata.items():
+                # Only include data for the specified academic year.
+                if data["academicYear"] != academic_year:
+                    continue
+
+                # Record the observations for this measurement.
+                observations += f"- {data["deliverableName"]}\r\n"
+                for note in data["notes"]:
+                    observations += f"    - {note}\n"
+                if not data["notes"]:
+                    observations += "    - No potential issues noted.\r\n"
+            
+            # Add the notes to the Excel sheet and configure wrapping/fitting.
+            cell = ws.range(f"C{row}")
+            cell.value = observations.replace("``", '"').replace("''", '"')
+            cell.api.WrapText = True
+            cell.rows.autofit()
+
+            # Increment the row for the next attribute-indicator pair.
+            row += 1
+
+        # Delete the unused rows.
+        ws.range(f"{row}:51").delete()
+
+        # Save the workbook, close, and quit app.
+        wb.save()
+        wb.close()
+        app.quit()
+
+        # Return the file name of the generated feedback form.
+        return file_name
 
     def close(self):
         """Close the database session."""
