@@ -679,9 +679,11 @@ class CEAB:
         str
             The file name of the generated PDF report.
         """
-
         # Get the data needed for the course report.
         attr_ind_pairs, attr_ind_data = self.get_course_report_data(course_code, academic_year)
+
+        # Generate the plots required for the report.
+        self.plot_course_scores(course_code, academic_year)
 
         # Set up Jinja2 environment for report template
         env = Environment(loader=FileSystemLoader("."))

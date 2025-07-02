@@ -177,6 +177,12 @@ def insert_into_db(data_dict, overwrite=False):
     init_db()
     session = get_session()
 
+    # Collect errors for summary reporting
+    instructor_errors = []
+    course_errors = []
+    measurement_errors = []
+    data_errors = []
+
     try:
         # Replace NaN with None in all DataFrames before inserting into the database
         for key in data_dict:
@@ -211,27 +217,62 @@ def insert_into_db(data_dict, overwrite=False):
 
         # Instructors, Courses, Measurements (use merge for upserts)
         for _, row in data_dict["instructor"].iterrows():
-            session.merge(row_to_instructor(row))
+            try:
+                session.merge(row_to_instructor(row))
+                session.flush()  # Forces INSERT so we can catch IntegrityError
+            except IntegrityError as e:
+                session.rollback()
+                instructor_errors.append((row.to_dict(), str(e)))
 
         for _, row in data_dict["course"].iterrows():
-            session.merge(row_to_course(row))
+            try:
+                session.merge(row_to_course(row))
+                session.flush()  # Forces INSERT so we can catch IntegrityError
+            except IntegrityError as e:
+                session.rollback()
+                course_errors.append((row.to_dict(), str(e)))
 
         for _, row in data_dict["measurement"].iterrows():
-            session.merge(row_to_measurement(row))
+            try:
+                session.merge(row_to_measurement(row))
+                session.flush()  # Forces INSERT so we can catch IntegrityError
+            except IntegrityError as e:
+                session.rollback()
+                measurement_errors.append((row.to_dict(), str(e)))
 
         # Data rows: Insert, skip duplicates (since we are using a composite primary key)
         for _, row in data_dict["data"].iterrows():
             data_obj = row_to_data(row)
             try:
-                session.add(data_obj)
+                session.merge(data_obj)
                 session.flush()  # Forces INSERT so we can catch IntegrityError
-            except IntegrityError:
-                session.rollback()  # Reset failed INSERT
-                continue  # Skip this row
+            except IntegrityError as e:
+                session.rollback()
+                instructor_errors.append((row.to_dict(), str(e)))
 
         session.commit()
+
     except Exception as e:
         session.rollback()
         raise
+
     finally:
         session.close()
+
+        # Print summary of errors
+        if instructor_errors:
+            print(f"\n❌ Instructor insert errors ({len(instructor_errors)}):")
+            for row, err in instructor_errors:
+                print(row, "|", err)
+        if course_errors:
+            print(f"\n❌ Course insert errors ({len(course_errors)}):")
+            for row, err in course_errors:
+                print(row, "|", err)
+        if measurement_errors:
+            print(f"\n❌ Measurement insert errors ({len(measurement_errors)}):")
+            for row, err in measurement_errors:
+                print(row, "|", err)
+        if data_errors:
+            print(f"\n❌ Data insert errors ({len(data_errors)}):")
+            for row, err in data_errors:
+                print(row, "|", err)
