@@ -5,7 +5,7 @@ from jinja2 import Environment, FileSystemLoader
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-import xlwings as xw
+import openpyxl
 import subprocess
 import shutil
 from datetime import datetime
@@ -755,11 +755,6 @@ class CEAB:
         str
             The file name of the generated Excel feedback form.
         """
-        # Set Excel to run in the background.
-        app = xw.App(visible=False)
-        app.display_alerts = False
-        app.screen_updating = False
-
         # Generate file name for the feedback form.
         file_name = f"narrative_{course_code.replace(' ', '_')}.xlsx"
 
@@ -767,33 +762,36 @@ class CEAB:
         shutil.copy("assets/Narrative_Template.xlsx", file_name)
 
         # Load the template Excel file and access the required sheet.
-        wb = xw.Book(file_name)
-        ws = wb.sheets["Narrative"]
+        wb = openpyxl.load_workbook(file_name)
+        ws = wb["Narrative"]
 
         # Get the course information.
         prefix, number, suffix = self.get_course_prefix_number_suffix(course_code)
-        course_id = self.get_row_IDs_matching_criteria("course", {"prefix": prefix, "number": number, "suffix": suffix, "academicYear": academic_year})[0]
+        course_id = self.get_row_IDs_matching_criteria(
+            "course",
+            {"prefix": prefix, "number": number, "suffix": suffix, "academicYear": academic_year}
+        )[0]
         instructor_first_name = self.session.query(Instructor.firstName).join(Course).filter(Course.courseID == course_id).scalar()
         instructor_last_name = self.session.query(Instructor.lastName).join(Course).filter(Course.courseID == course_id).scalar()
 
         # Input the course information into the template.
-        ws.range("C2").value = instructor_first_name
-        ws.range("C3").value = instructor_last_name
-        ws.range("C4").value = course_code
-        ws.range("C5").value = academic_year
+        ws["C2"] = instructor_first_name
+        ws["C3"] = instructor_last_name
+        ws["C4"] = course_code
+        ws["C5"] = academic_year
 
-        # Get the data needed for the feedback from.
+        # Get the data needed for the feedback form.
         attr_ind_pairs, attr_ind_data = self.get_course_report_data(course_code, academic_year)
 
         # Fill in the feedback form with the attribute-indicator pairs and their metadata.
         row = 11  # Start filling from row 11
         for attr, ind in attr_ind_pairs:
             # Fill in the attribute/indicator pair.
-            ws.range(f"B{row}").value = f"{attr}{ind}"
-            
+            ws[f"B{row}"] = f"{attr}{ind}"
+
             # Get the metadata for this attribute-indicator pair
             metadata = attr_ind_data[f"{attr}{ind}"]
-            
+
             # Generate the observations string for this attribute-indicator pair.
             observations = ""
             for _, data in metadata.items():
@@ -802,28 +800,23 @@ class CEAB:
                     continue
 
                 # Record the observations for this measurement.
-                observations += f"- {data["deliverableName"]}\r\n"
+                observations += f'- {data["deliverableName"]}\n'
                 for note in data["notes"]:
-                    observations += f"    - {note}\n"
+                    observations += f'    - {note}\n'
                 if not data["notes"]:
-                    observations += "    - No potential issues noted.\r\n"
-            
-            # Add the notes to the Excel sheet and configure wrapping/fitting.
-            cell = ws.range(f"C{row}")
-            cell.value = observations.replace("``", '"').replace("''", '"')
-            cell.api.WrapText = True
-            cell.rows.autofit()
+                    observations += "    - No potential issues noted.\n"
+
+            # Add the notes to the Excel sheet.
+            ws[f"C{row}"] = observations.replace("``", '"').replace("''", '"')
+
+            # Set wrap text in notes box.
+            ws[f"C{row}"].alignment = openpyxl.styles.Alignment(wrap_text=True, vertical="top")
 
             # Increment the row for the next attribute-indicator pair.
             row += 1
 
-        # Delete the unused rows.
-        ws.range(f"{row}:51").delete()
-
-        # Save the workbook, close, and quit app.
-        wb.save()
-        wb.close()
-        app.quit()
+        # Save the workbook.
+        wb.save(file_name)
 
         # Return the file name of the generated feedback form.
         return file_name

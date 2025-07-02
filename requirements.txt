@@ -21,4 +21,3 @@ six==1.17.0
 SQLAlchemy==2.0.41
 typing_extensions==4.14.0
 tzdata==2025.2
-xlwings==0.33.15
