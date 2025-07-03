@@ -123,6 +123,9 @@ def ingest_excel_data(data_file: str) -> dict:
 
     data_dict["data"] = melted
 
+    # Make sure all data are numeric
+    data_dict["data"]["score"] = pd.to_numeric(data_dict["data"]["score"], errors='raise')
+
     data_dict = convert_scores_to_ceab_scale(data_dict)
 
     return data_dict
