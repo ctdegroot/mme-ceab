@@ -276,3 +276,7 @@ def insert_into_db(data_dict, overwrite=False):
             print(f"\n❌ Data insert errors ({len(data_errors)}):")
             for row, err in data_errors:
                 print(row, "|", err)
+
+        # Raise an exception if any errors occurred so batch_ingest can count them
+        if instructor_errors or course_errors or measurement_errors or data_errors:
+            raise RuntimeError("Database insert errors occurred. See above for details.")
