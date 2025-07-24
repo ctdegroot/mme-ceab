@@ -60,6 +60,21 @@ score_names = {
     '4': 'Exceeds Expectations'
 }
 
+attribute_names = {
+    "KB"  : "Knowledge Base",
+    "PA"  : "Problem Analysis",
+    "I"   : "Investigation",
+    "DES" : "Design",
+    "ET"  : "Use of Engineering Tools",
+    "ITW" : "Individual and Team Work",
+    "CS"  : "Communication Skills",
+    "PR"  : "Professionalism",
+    "IES" : "Impact of Engineering on Society and the Environment",
+    "EE"  : "Ethics and Equity",
+    "EPM" : "Economics and Project Management",
+    "LL"  : "Lifelong Learning"
+}
+
 
 class CEAB:
     """Class used to represent a CEAB measurements database."""
@@ -170,26 +185,31 @@ class CEAB:
         scores = self.session.query(Data.score).filter(Data.measurementID == measurement_id).all()
         return [v[0] for v in scores] # Extract values from tuples before returning
 
-    def get_score_distribution_by_measurement_id(self, measurement_id: str) -> dict:
+    def get_score_distribution_by_measurement_id(self, measurement_id: str, normalize: bool = False) -> dict:
         """Get the distribution of scores for a specific measurement ID.
 
         Parameters
         ----------
         measurement_id : str
             The measurement ID to fetch the score distribution for.
+        normalize : bool, optional
+            Whether to normalize the scores to fractions (default is False).
 
         Returns
         -------
-        dict
-            Dictionary with counts of each score (1-4) for the specified measurement ID.
+        tuple
+            Tuple with counts (or fractions, if normalize=True) of each score (1-4) for the specified measurement ID.
         """
         scores = self.get_scores_by_measurement_id(measurement_id)
-        return {
-            '1': scores.count(1),
-            '2': scores.count(2),
-            '3': scores.count(3),
-            '4': scores.count(4)
-        }
+        if not scores:
+            return {'1': 0, '2': 0, '3': 0, '4': 0}
+        total_scores = len(scores)
+        return (
+                scores.count(1) if not normalize else scores.count(1) / total_scores,
+                scores.count(2) if not normalize else scores.count(2) / total_scores,
+                scores.count(3) if not normalize else scores.count(3) / total_scores,
+                scores.count(4) if not normalize else scores.count(4) / total_scores
+            )
 
     def get_summary_table_by_course(self) -> pd.DataFrame:
         """Get a summary table of the data aggregated by course.
@@ -397,6 +417,134 @@ class CEAB:
         ).all()
 
         return [m.measurementID for m in measurements]
+
+    def plot_score_distribution(self, course_code: str, academic_year: str, attr: str, ind: int, show_expected_range: bool = False) -> str:
+        """
+        Plots a score distribution as fractions for a given course, attribute, and indicator, up to a given academic year.
+
+        Parameters
+        ----------
+        course_code : str
+            The course code to filter by (e.g., 'CEAB 123').
+        academic_year : str
+            The academic year to filter by (e.g., '2023/24').
+        attr : str
+            The attribute to filter by (e.g., 'KB', 'PA').
+        ind : int
+            The indicator to filter by (e.g., 1, 2, 3).
+        show_expected_range : bool, optional
+            Whether to show the expected ranges for each score as translucent rectangles (default is False).
+
+        Returns
+        -------
+        str
+            The the filename of the saved plot image.
+  
+        """
+        # Define a colourblind-safe colour scheme for the scores
+        COLORS = ['#332288', '#88CCEE', '#44AA99', '#117733']
+
+        # Get the parts of the course code.
+        prefix, number, suffix = self.get_course_prefix_number_suffix(course_code)
+
+        # Get all of the measurements for the specified course code, attribute, and indicator.
+        measurements = self.session.query(Measurement).filter(
+            Measurement.course.has(Course.prefix == prefix),
+            Measurement.course.has(Course.number == number),
+            Measurement.course.has(Course.suffix == suffix),
+            Measurement.attribute == attr,
+            Measurement.indicator == ind
+        ).all()
+        
+        # If no measurements are found, print a message and return.
+        if not measurements:
+            print(f"No measurements found for course {course_code}, attribute {attr}, indicator {ind}.")
+            return
+
+        # Get the scores and metadata and convert to a DataFrame
+        rows = []
+        for m in measurements:
+            n1, n2, n3, n4 = self.get_score_distribution_by_measurement_id(m.measurementID, normalize=True)
+            rows.append({
+                "attribute": m.attribute,
+                "indicator": m.indicator,
+                "academic_year": m.course.academicYear,
+                "frac_score_1": n1,
+                "frac_score_2": n2,
+                "frac_score_3": n3,
+                "frac_score_4": n4
+            })
+        scores = pd.DataFrame(rows)
+
+        # Extract and sort academic years by starting year
+        scores = scores.assign(
+            year_start=scores['academic_year'].str.extract(r'^(\d{4})').astype(int)
+        ).sort_values(by='year_start')
+
+        # Keep only those scores that are in the specified academic year or sooner
+        year_limit = int(re.match(r'^(\d{4})', academic_year).group(1))
+        scores = scores[scores['year_start'] <= year_limit]
+
+        # Keep only the 4 most recent unique academic years in the data remaining
+        scores = scores[scores['year_start'] > (year_limit - 4)]
+
+        # Get the academic years in the data remaining
+        recent_years = scores['academic_year'].unique()
+
+        # Create color map, mapping each year to a color
+        # Start at the end of the COLORS list to ensure the most recent year gets the last color
+        color_map = {
+            year: COLORS[i] for i, year in enumerate(reversed(recent_years))
+        }
+
+        # Set up the data for plotting
+        score_labels = ['1', '2', '3', '4']
+        bar_width = 0.2
+        x = np.arange(len(score_labels))
+        num_years = len(recent_years)
+        group_width = num_years * bar_width
+        tick_positions = x + (group_width - bar_width) / 2
+
+        # Create the figure
+        plt.figure(figsize=(8, 5))
+
+        # Draw expected ranges as translucent rectangles, if requested
+        if show_expected_range:
+            for i, label in enumerate(score_labels):
+                low, high = expected_ranges[label]
+                plt.axhspan(
+                    low, high,
+                    xmin=(i + 0.05) / len(score_labels),
+                    xmax=(i + 0.95) / len(score_labels),
+                    color='gray', alpha=0.15, zorder=0
+                )
+
+        # Plot the score distributions for each year
+        for i, year in enumerate(recent_years):
+            year_data = scores[scores['academic_year'] == year]
+            # Get the fractions for each score (if multiple mesurements, they are averaged)
+            fracs = year_data[['frac_score_1', 'frac_score_2', 'frac_score_3', 'frac_score_4']].sum().tolist()
+            total = sum(fracs) or 1
+            fracs = [c / total for c in fracs]
+            plt.bar(
+                x + i * bar_width,
+                fracs,
+                width=bar_width,
+                color=color_map[year],
+                label=year
+            )
+
+        plt.xticks(tick_positions, score_labels)
+        plt.xlabel("Score")
+        plt.ylabel("Fraction of Students")
+        plt.ylim(0, 1)
+        plt.legend(title="Academic Year")
+        plt.tight_layout()
+        file_name = f"{course_code.replace(' ', '_')}_{attr}{ind}.png"
+        plt.savefig(file_name)
+        plt.close()
+
+        return file_name
 
     def plot_score_distributions(self, score_df: pd.DataFrame, course_code: str):
         """
@@ -739,6 +887,142 @@ class CEAB:
 
         # Return the file name of the generated PDF report
         return f"{file_name}.pdf"
+    
+    def get_graduate_attribute_report_data(self, attribute: str, academic_year: str) -> tuple:
+        """Get the data needed to generate a report for a graduate attribute and academic year.
+        
+        Parameters
+        ----------
+        attribute : str
+            The graduate attribute abbreviation for which the report is generated.
+        academic_year : str
+            The academic year to filter the measurements by, in the format "2023/24".
+        
+        Returns
+        -------
+        measurement_data : dict
+            A dictionary containing the metadata for each measurement.
+            The keys are the indicator names, and the values are dictionaries with metadata.
+        """
+        measurement_data = {}
+
+        # Loop through all of the indicators for the given attribute.
+        for ind in all_attributes[attribute]:            
+            # Get all of the measurements that match the graduate attribute and indicator for the academic year.
+            measurements = self.session.query(Measurement).filter(
+                Measurement.attribute == attribute,
+                Measurement.indicator == ind,
+                Measurement.course.has(Course.academicYear == academic_year)
+            ).all()
+
+            # If there are no measurements for this attribute and indicator, insert "None" and skip to the next one.
+            if not measurements:
+                measurement_data[ind] = None
+                continue
+
+            # Collect the metadata for each measurement.
+            measurement_data[ind] = {}
+            for m in measurements:   
+                measurement_data[ind][m.measurementID] = {
+                    "courseCode": f"{m.course.prefix.strip()} {m.course.number}{m.course.suffix.strip() if m.course.suffix.strip() != 'none' else ''}",
+                    "instructor": f"{m.course.instructor.firstName} {m.course.instructor.lastName}",
+                    "academicYear": m.course.academicYear,
+                    "deliverableType": m.deliverableType,
+                    "deliverableName": m.deliverableName,
+                    "date": m.date.strftime("%Y-%m-%d")
+                }
+
+        return measurement_data
+
+    def generate_graduate_attribute_report(self, attribute: str, academic_year: str) -> str:
+        """Generate a report for a specific graduate attribute.
+
+        Parameters
+        ----------
+        attribute : str
+            The graduate attribute abbreviation for which the report is generated.
+        academic_year : str
+            The academic year for which the report is generated.
+
+        Returns
+        -------
+        str
+            The file name of the generated PDF report.
+        """
+        # Get the data needed for the course report.
+        measurement_data = self.get_graduate_attribute_report_data(attribute, academic_year)
+
+        # Generate the plots required for the report.
+        plot_files = []
+        for ind, data in measurement_data.items():
+            # Check if there are no measurements for this attribute and indicator.
+            # If so, print a message and skip to the next one.
+            if data is None:
+                print(f"No measurements found for attribute {attribute}, indicator {ind} in academic year {academic_year}.")
+                continue
+
+            # Get all of the unique code codes from the data.
+            unique_course_codes = set(d['courseCode'] for d in data.values())
+
+            # Loop through each course code and generate the score distribution plot.
+            for course_code in unique_course_codes:
+                file = self.plot_score_distribution(course_code, academic_year, attribute, ind, show_expected_range=True)
+                plot_files.append(file)
+
+        # Set up Jinja2 environment for report template
+        env = Environment(loader=FileSystemLoader("."))
+        env.filters['escape_latex'] = escape_latex
+        template = env.get_template("/assets/graduate_attribute_report_template.tex")
+
+        # Render LaTeX with data
+        rendered_tex = template.render(attribute=attribute,
+                                       attribute_name=attribute_names[attribute],
+                                       academic_year=academic_year,
+                                       measurement_data=measurement_data)
+        
+        # Save LaTeX output
+        file_name = "graduate_attribute_report_{}".format(attribute)
+        with open(f"{file_name}.tex", "w") as f:
+            f.write(rendered_tex)
+
+        # Compile LaTeX to PDF (do twice to ensure all references are resolved)
+        for _ in range(2):
+            try:
+                result = subprocess.run(
+                    ["pdflatex", "-interaction=nonstopmode", f"{file_name}.tex"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.PIPE,
+                    check=True
+                )
+            except subprocess.CalledProcessError as e:
+                print(f"❌ LaTeX compilation failed for {file_name}.tex:")
+                print(e.stderr.decode(errors='ignore'))
+                return None
+            
+        # Remove the auxiliary files generated by LaTeX
+        for ext in ['.aux', '.log', '.out', '.tex']:
+            path = f"{file_name}{ext}"
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                # No problem — file just doesn't exist
+                pass
+            except Exception as e:
+                print(f"Error removing {path}:", e)
+
+        # # Remove the generated .png files from the score distributions
+        # for attr, ind in attr_ind_pairs:
+        #     png_file = f"{course_code.replace(' ', '_')}_{attr}{ind}.png"
+        #     try:
+        #         os.remove(png_file)
+        #     except FileNotFoundError:
+        #         # No problem — file just doesn't exist
+        #         pass
+        #     except Exception as e:
+        #         print(f"Error removing {png_file}:", e)
+
+        # # Return the file name of the generated PDF report
+        # return f"{file_name}.pdf"
 
     def generate_course_feedback_form(self, course_code: str, academic_year: str) -> str:
         """Generate a feedback form for a specific course.

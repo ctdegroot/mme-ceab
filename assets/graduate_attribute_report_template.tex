@@ -1,0 +1,68 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyhdr}
+\usepackage{lastpage}
+\usepackage{ltablex}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{datetime}
+\usepackage{titlesec}
+\usepackage{hyperref}
+\usepackage{float}
+\usepackage{enumitem}
+\usepackage{makecell}
+\usepackage{tabularx}
+
+% Section title setup
+\titleformat{\section}
+  {\normalfont\Large\bfseries} % change \Large to \large or \normalsize to reduce size
+  {\thesection}{1em}{}
+
+% Title spacing setup
+%\titlespacing*{\section}{0pt}{1ex}{0.5ex}
+%\titlespacing*{\paragraph}{0pt}{0pt}{1em}
+
+% Reduce space between items
+\setlist[itemize]{noitemsep, topsep=0pt}
+
+% Header setup
+\setlength{\headheight}{13.6pt} % Adjust head height to avoid fancyhdr error
+\addtolength{\topmargin}{-1.6pt} % Compensate for the increased head height
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{ {{ attribute_name }} }
+\chead{CEAB Graduate Attribute Report}
+\rhead{\monthname[\month]~\the\day,~\the\year}
+\cfoot{Page \thepage~of~\pageref*{LastPage}}
+
+\begin{document}
+
+{\centering
+  \vspace*{2em}
+  {\LARGE \bfseries CEAB Graduate Attribute Report for {{ attribute_name }} \par}
+  \vspace{2em}
+}
+
+{% for ind, data in measurement_data.items() %}
+    \section*{Data for {{ attribute -}} {{- ind }}}
+
+    {% for _, measurement in data.items() %}
+        \noindent\textbf{Measurement {{ loop.index }} }
+
+        \begin{itemize}
+            \item Course Code: {{ measurement['courseCode'] }}
+            \item Instructor: {{ measurement['instructor']|escape_latex }}
+            \item Academic Year: {{ measurement['academicYear']|escape_latex }}
+            \item Deliverable Type: {{ measurement['deliverableType']|escape_latex }}
+            \item Deliverable Name: {{ measurement['deliverableName']|escape_latex }}
+            \item Measurement Date: {{ measurement['date']|escape_latex }}
+        \end{itemize}
+
+        \begin{center}
+            \includegraphics[width=0.6\textwidth]{ {{ measurement['courseCode'].replace(" ", "_") }}_{{ attribute }}{{ ind }}.png }
+        \end{center}
+
+    {% endfor %}
+{% endfor %}
+
+\end{document}
