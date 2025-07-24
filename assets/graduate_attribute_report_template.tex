@@ -53,32 +53,39 @@
 
 \newpage
 
-\noindent Summary of measurement data for all courses measured.
-
-\newpage
+{% for ind, data in measurement_data.items() %}
+    {% if measurement_data[ind] %}
+        \noindent Summary of measurement data for all courses that measured {{ attribute -}} {{- ind }}.
+        \begin{center}
+            \includegraphics[width=0.6\textwidth]{ {{ attribute }}{{ ind }}_by_course.png }
+        \end{center}
+        \newpage
+    {% endif %}
+{% endfor %}
 
 \section*{Part 2: Detailed Measurement Data}
 
-{% for ind, data in measurement_data.items() %}
-    \subsection*{Data for {{ attribute -}} {{- ind }}}
+    {% for ind, data in measurement_data.items() %}
+        {% if measurement_data[ind] %}
+            \subsection*{Data for {{ attribute -}} {{- ind }}}
 
-    {% for _, measurement in data.items() %}
-        \noindent\textbf{Measurement {{ loop.index }} }
+            {% for _, measurement in data.items() %}
+                \noindent\textbf{Measurement {{ loop.index }} }
 
-        \begin{itemize}
-            \item Course Code: {{ measurement['courseCode'] }}
-            \item Instructor: {{ measurement['instructor']|escape_latex }}
-            \item Academic Year: {{ measurement['academicYear']|escape_latex }}
-            \item Deliverable Type: {{ measurement['deliverableType']|escape_latex }}
-            \item Deliverable Name: {{ measurement['deliverableName']|escape_latex }}
-            \item Measurement Date: {{ measurement['date']|escape_latex }}
-        \end{itemize}
+                \begin{itemize}
+                    \item Course Code: {{ measurement['courseCode'] }}
+                    \item Instructor: {{ measurement['instructor']|escape_latex }}
+                    \item Academic Year: {{ measurement['academicYear']|escape_latex }}
+                    \item Deliverable Type: {{ measurement['deliverableType']|escape_latex }}
+                    \item Deliverable Name: {{ measurement['deliverableName']|escape_latex }}
+                    \item Measurement Date: {{ measurement['date']|escape_latex }}
+                \end{itemize}
 
-        \begin{center}
-            \includegraphics[width=0.6\textwidth]{ {{ measurement['courseCode'].replace(" ", "_") }}_{{ attribute }}{{ ind }}.png }
-        \end{center}
-
-    {% endfor %}
+                \begin{center}
+                    \includegraphics[width=0.6\textwidth]{ {{ measurement['courseCode'].replace(" ", "_") }}_{{ attribute }}{{ ind }}.png }
+                \end{center}
+            {% endfor %}
+        {% endif %}
 {% endfor %}
 
 \end{document}

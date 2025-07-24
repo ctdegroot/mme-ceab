@@ -335,7 +335,7 @@ class CEAB:
         x = np.arange(len(attr_ind_pairs))
 
         score_labels = ['1', '2', '3', '4']
-        colors = colors = ['#4D4D4D', '#969696', '#92C5DE', '#0571B0']  # Colourblind-safe gradient
+        colors = ['#4D4D4D', '#969696', '#92C5DE', '#0571B0']  # Colourblind-safe gradient
 
         fig, axes = plt.subplots(4, 1, figsize=(len(attr_ind_pairs) * 0.6, 8), sharex=True)
         fig.subplots_adjust(hspace=0.4)
@@ -418,7 +418,123 @@ class CEAB:
 
         return [m.measurementID for m in measurements]
 
-    def plot_graduate_attribute_scores(self, attr: str, academic_year: str, num_past_years: int = 3) -> str:
+    def plot_indicator_scores_by_course(self, attr: str, ind: int, academic_year: str, course_prefixes: list) -> str:
+        """Plots the score distribution for a specific attribute and indicator across all courses in a given academic year.
+
+        Parameters
+        ----------
+        attr : str
+            The attribute to plot (e.g., 'KB', 'PA').
+        ind : int
+            The indicator to plot (e.g., 1, 2, 3).
+        academic_year : str
+            The academic year to filter by (e.g., '2023/24').
+        course_prefixes : list
+            List of course prefixes to filter by (e.g., ['MME', 'ES']).
+
+        Returns
+        -------
+        str
+            The filename of the saved plot image.
+        """
+        # Get all measurements for the specified attribute and indicator in the academic year.
+        measurements = self.session.query(Measurement).filter(
+            Measurement.attribute == attr,
+            Measurement.indicator == ind,
+            Measurement.course.has(Course.academicYear == academic_year),
+            Measurement.course.has(Course.prefix.in_(course_prefixes))
+        ).all()
+
+        # Collect the score distribution by course.
+        course_measurements = {}
+        for m in measurements:
+            # Get the course code in the format "XYZ 1234A".
+            course_code = f"{m.course.prefix.strip()} {m.course.number}{m.course.suffix.strip() if m.course.suffix.strip() != 'none' else ''}"
+
+            # If the course has not been added yet, initialize it.
+            if course_code not in course_measurements:
+                course_measurements[course_code] = {
+                    "course_number": m.course.number,
+                    "scores" : [0, 0, 0, 0],  # [n1, n2, n3, n4]
+                    "num_scores" : 0
+                }
+
+            # Get the score distribution for this measurement.
+            n1, n2, n3, n4 = self.get_score_distribution_by_measurement_id(m.measurementID, normalize=False)
+
+            # Aggregate the scores for this course.
+            course_measurements[course_code]["scores"][0] += n1
+            course_measurements[course_code]["scores"][1] += n2
+            course_measurements[course_code]["scores"][2] += n3
+            course_measurements[course_code]["scores"][3] += n4
+            course_measurements[course_code]["num_scores"] += n1 + n2 + n3 + n4
+
+        # Normalize the scores to fractions
+        for course_code, data in course_measurements.items():
+            if data["num_scores"] > 0:
+                data["scores"][0] /= data["num_scores"]
+                data["scores"][1] /= data["num_scores"]
+                data["scores"][2] /= data["num_scores"]
+                data["scores"][3] /= data["num_scores"]
+            else:
+                # If no scores, set to zero
+                data["scores"] = [0, 0, 0, 0]
+
+        # Sort courses by course number
+        course_measurements = sorted(course_measurements.items(), key=lambda x: x[1]["course_number"])
+        
+        # Define colors
+        colors = ['#4D4D4D', '#969696', '#92C5DE', '#0571B0']
+        score_labels = ['1', '2', '3', '4']
+
+        # Prepare data for plotting
+        course_labels = [course_code for course_code, _ in course_measurements]
+        score_data = [data["scores"] for _, data in course_measurements]
+
+        # Convert to numpy array for stacking
+        score_data = np.array(score_data)
+        cumulative = np.zeros(len(score_data))
+
+        # Create horizontal stacked bar chart
+        fig, ax = plt.subplots(figsize=(8, 1.2 * len(course_labels)))
+
+        for i in range(4):  # for each score level
+            ax.barh(
+                y=np.arange(len(course_labels)),
+                width=score_data[:, i],
+                left=cumulative,
+                color=colors[i],
+                label=score_labels[i]
+            )
+            cumulative += score_data[:, i]
+
+        # Format y-axis with course labels
+        ax.set_yticks(np.arange(len(course_labels)))
+        ax.set_yticklabels(course_labels)
+        ax.invert_yaxis()  # top to bottom order
+        ax.set_xlim(0, 1)
+        ax.set_xlabel("Fraction of Students")
+
+        # Add legend below the plot
+        ax.legend(
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            borderaxespad=0,
+            ncol=1,
+            title="Scores"
+        )
+
+        # Use tight_layout with extra space at the top
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+
+        # Save and close
+        file_name = f"{attr}{ind}_by_course.png"
+        plt.savefig(file_name, bbox_inches='tight')
+        plt.close()
+
+        return file_name
+
+    def plot_graduate_attribute_scores(self, attr: str, academic_year: str, course_prefixes: list, num_past_years: int = 3) -> str:
         """Plots the average scores for a specific attribute across multiple academic years.
 
         Parameters
@@ -427,6 +543,8 @@ class CEAB:
             The attribute to plot (e.g., 'KB', 'PA').
         academic_year : str
             The last academic year to plot  (e.g., '2023/24').
+        course_prefixes : list
+            List of course prefixes to filter by (e.g., ['MME', 'ES']).
         num_past_years : int, optional
             The number of past years to include in the plot (default is 3).
 
@@ -1001,7 +1119,7 @@ class CEAB:
         # Return the file name of the generated PDF report
         return f"{file_name}.pdf"
     
-    def get_graduate_attribute_report_data(self, attribute: str, academic_year: str) -> tuple:
+    def get_graduate_attribute_report_data(self, attribute: str, academic_year: str, course_prefixes: list) -> tuple:
         """Get the data needed to generate a report for a graduate attribute and academic year.
         
         Parameters
@@ -1010,6 +1128,8 @@ class CEAB:
             The graduate attribute abbreviation for which the report is generated.
         academic_year : str
             The academic year to filter the measurements by, in the format "2023/24".
+        course_prefixes : list
+            A list of course prefixes to filter the measurements by (e.g., ['MME', 'ES']).
         
         Returns
         -------
@@ -1025,7 +1145,8 @@ class CEAB:
             measurements = self.session.query(Measurement).filter(
                 Measurement.attribute == attribute,
                 Measurement.indicator == ind,
-                Measurement.course.has(Course.academicYear == academic_year)
+                Measurement.course.has(Course.academicYear == academic_year),
+                Measurement.course.has(Course.prefix.in_(course_prefixes))
             ).all()
 
             # If there are no measurements for this attribute and indicator, insert "None" and skip to the next one.
@@ -1047,7 +1168,7 @@ class CEAB:
 
         return measurement_data
 
-    def generate_graduate_attribute_report(self, attribute: str, academic_year: str, num_past_years: int = 3) -> str:
+    def generate_graduate_attribute_report(self, attribute: str, academic_year: str, course_prefixes: list, num_past_years: int = 3) -> str:
         """Generate a report for a specific graduate attribute.
 
         Parameters
@@ -1056,6 +1177,8 @@ class CEAB:
             The graduate attribute abbreviation for which the report is generated.
         academic_year : str
             The academic year for which the report is generated.
+        course_prefixes : list
+            A list of course prefixes to filter the measurements by (e.g., ['MME', 'ES']).
         num_past_years : int, optional
             The number of past years to include in the report (default is 3).
 
@@ -1065,13 +1188,25 @@ class CEAB:
             The file name of the generated PDF report.
         """
         # Get the data needed for the course report.
-        measurement_data = self.get_graduate_attribute_report_data(attribute, academic_year)
+        measurement_data = self.get_graduate_attribute_report_data(attribute, academic_year, course_prefixes)
 
         # Keep track of the plot files generated so they can be removed later.
         plot_files = []
 
-        # Generate the summary plots for the graduate attributes.
-        file = self.plot_graduate_attribute_scores(attribute, academic_year, num_past_years)
+        # Generate the summary plot for the graduate attributes.
+        file = self.plot_graduate_attribute_scores(attribute, academic_year, course_prefixes, num_past_years)
+        plot_files.append(file)
+
+        # Generate the course-level plots for each indicator in the graduate attribute.
+        for ind in all_attributes[attribute]:
+            # If there are no measurements for this indicator, skip to the next one.
+            if measurement_data[ind] is None:
+                print(f"No measurements found for attribute {attribute}, indicator {ind} in academic year {academic_year}.")
+                continue
+            
+            # Generate the plot for the indicator scores by course.
+            file = self.plot_indicator_scores_by_course(attribute,ind, academic_year, course_prefixes)
+            plot_files.append(file)
 
         # Generate the course-level plots required for the report.
         for ind, data in measurement_data.items():
