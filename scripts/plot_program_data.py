@@ -15,12 +15,11 @@ def plot_program_data(academic_year: str):
     """
     ceab = CEAB()
     ceab.plot_aggregate_scores(academic_year)
-
-
-
+    
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Plot program data for a given academic year.")
     parser.add_argument("academic_year", type=str, help="The academic year to plot data for, e.g., '2023-2024'.")
+    parser.add_argument("destination", type=str, help="The destination directory to save the plot. Defaults to current directory.", nargs='?', default='.')
     args = parser.parse_args()
 
     plot_program_data(args.academic_year)
