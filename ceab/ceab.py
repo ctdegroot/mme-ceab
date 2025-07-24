@@ -418,6 +418,119 @@ class CEAB:
 
         return [m.measurementID for m in measurements]
 
+    def plot_graduate_attribute_scores(self, attr: str, academic_year: str, num_past_years: int = 3) -> str:
+        """Plots the average scores for a specific attribute across multiple academic years.
+
+        Parameters
+        ----------
+        attr : str
+            The attribute to plot (e.g., 'KB', 'PA').
+        academic_year : str
+            The last academic year to plot  (e.g., '2023/24').
+        num_past_years : int, optional
+            The number of past years to include in the plot (default is 3).
+
+        Returns
+        -------
+        str
+            The filename of the saved plot image.
+        """
+        # Get all unique indicators for the specified attribute.
+        indicators = all_attributes.get(attr, [])
+        
+        # Initialize the data structure to hold the scores for each indicator.
+        data =  {}
+
+        # Loop through all indicators and get the average scores for each, sorted by year.
+        for ind in all_attributes[attr]:
+            # Initialize the data for this attribute-indicator pair.
+            data[ind] = {}
+
+            # Get the list of academic years to consider.
+            final_year = int(re.match(r'^(\d{4})', academic_year).group(1))
+            initial_year = final_year - num_past_years
+            academic_years = [f"{year}/{str(year + 1)[-2:]}" for year in range(initial_year, final_year + 1)]
+
+            # Loop through the academic years and collect the measurement data.
+            for year in academic_years:
+
+                # Initialize the data for this academic year.
+                data[ind][year] = [0, 0, 0, 0]  # [n1, n2, n3, n4]
+
+                # Get all measurements for the specified attribute and indicator in the academic year.
+                measurements = self.session.query(Measurement).filter(
+                    Measurement.attribute == attr,
+                    Measurement.indicator == ind,
+                    Measurement.course.has(Course.academicYear == year)
+                ).all()
+
+                # If no measurements are found, replace data with None and continue to the next.
+                if not measurements:
+                    data[ind][year] = None
+                    continue
+
+                # Aggregate the scores for this attribute-indicator pair
+                count = 0
+                for m in measurements:
+                    n1, n2, n3, n4 = self.get_score_distribution_by_measurement_id(m.measurementID, normalize=False)
+                    data[ind][year][0] = data[ind][year][0] + n1
+                    data[ind][year][1] = data[ind][year][1] + n2
+                    data[ind][year][2] = data[ind][year][2] + n3
+                    data[ind][year][3] = data[ind][year][3] + n4
+                    count = count + n1 + n2 + n3 + n4
+
+                # Normalize the scores to fractions
+                data[ind][year][0] /= count
+                data[ind][year][1] /= count
+                data[ind][year][2] /= count
+                data[ind][year][3] /= count
+            
+        # Create colourblind-safe color map
+        COLORS = ['#332288', '#88CCEE', '#44AA99', '#117733']
+
+        # Map each year to a colour
+        # Start at the end of the COLORS list to ensure the most recent year gets the last color
+        color_map = {
+            year: COLORS[i] for i, year in enumerate(reversed(academic_years))
+        }
+
+        # Set up the data for plotting
+        score_labels = ['1', '2', '3', '4']
+        bar_width = 0.2
+
+        num_indicators = len(indicators)
+        fig, axes = plt.subplots(num_indicators, 1, figsize=(8, 4 * num_indicators), sharex=True)
+
+        # If there's only one indicator, axes won't be iterable
+        if num_indicators == 1:
+            axes = [axes]
+
+        for ax, ind in zip(axes, indicators):
+            x = np.arange(len(score_labels))
+            for i, year in enumerate(academic_years):
+                fracs = data[ind].get(year)
+                if fracs is None:
+                    fracs = [0, 0, 0, 0]
+                ax.bar(x + i * bar_width, fracs, width=bar_width, color=color_map[year], label=year if ind == indicators[0] else None)
+
+            ax.set_title(f"Indicator: {ind}")
+            ax.set_ylabel("Fraction of Students")
+            ax.set_ylim(0, 1)
+            ax.set_xticks(x + ((len(academic_years) - 1) / 2) * bar_width)
+            ax.set_xticklabels(score_labels)
+
+        axes[-1].set_xlabel("Score")
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="lower center", title="Academic Year",
+                ncol=len(academic_years), bbox_to_anchor=(0.5, 0.01))
+        plt.tight_layout(rect=[0, 0.05, 1, 1])  # Add space for legend
+
+        file_name = f"{attr}_summary_plot.png"
+        plt.savefig(file_name)
+        plt.close()
+
+        return file_name
+
     def plot_score_distribution(self, course_code: str, academic_year: str, attr: str, ind: int, show_expected_range: bool = False) -> str:
         """
         Plots a score distribution as fractions for a given course, attribute, and indicator, up to a given academic year.
@@ -934,7 +1047,7 @@ class CEAB:
 
         return measurement_data
 
-    def generate_graduate_attribute_report(self, attribute: str, academic_year: str) -> str:
+    def generate_graduate_attribute_report(self, attribute: str, academic_year: str, num_past_years: int = 3) -> str:
         """Generate a report for a specific graduate attribute.
 
         Parameters
@@ -943,6 +1056,8 @@ class CEAB:
             The graduate attribute abbreviation for which the report is generated.
         academic_year : str
             The academic year for which the report is generated.
+        num_past_years : int, optional
+            The number of past years to include in the report (default is 3).
 
         Returns
         -------
@@ -952,8 +1067,13 @@ class CEAB:
         # Get the data needed for the course report.
         measurement_data = self.get_graduate_attribute_report_data(attribute, academic_year)
 
-        # Generate the plots required for the report.
+        # Keep track of the plot files generated so they can be removed later.
         plot_files = []
+
+        # Generate the summary plots for the graduate attributes.
+        file = self.plot_graduate_attribute_scores(attribute, academic_year, num_past_years)
+
+        # Generate the course-level plots required for the report.
         for ind, data in measurement_data.items():
             # Check if there are no measurements for this attribute and indicator.
             # If so, print a message and skip to the next one.

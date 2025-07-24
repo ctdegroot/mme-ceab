@@ -43,8 +43,24 @@
   \vspace{2em}
 }
 
+\section*{Part 1: Overview}
+
+\noindent Summary of measurement data across the program.
+
+\begin{center}
+    \includegraphics[width=0.5\textwidth]{ {{ attribute }}_summary_plot.png }
+\end{center}
+
+\newpage
+
+\noindent Summary of measurement data for all courses measured.
+
+\newpage
+
+\section*{Part 2: Detailed Measurement Data}
+
 {% for ind, data in measurement_data.items() %}
-    \section*{Data for {{ attribute -}} {{- ind }}}
+    \subsection*{Data for {{ attribute -}} {{- ind }}}
 
     {% for _, measurement in data.items() %}
         \noindent\textbf{Measurement {{ loop.index }} }
