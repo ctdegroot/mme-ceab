@@ -1,4 +1,5 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from ceab.database import get_session
 from ceab.models import Instructor, Course, Measurement, Data
 from jinja2 import Environment, FileSystemLoader
@@ -437,12 +438,15 @@ class CEAB:
         str
             The filename of the saved plot image.
         """
-        # Get all measurements for the specified attribute and indicator in the academic year.
         measurements = self.session.query(Measurement).filter(
             Measurement.attribute == attr,
             Measurement.indicator == ind,
-            Measurement.course.has(Course.academicYear == academic_year),
-            Measurement.course.has(Course.prefix.in_(course_prefixes))
+            Measurement.course.has(
+                and_(
+                    Course.academicYear == academic_year,
+                    Course.prefix.in_(course_prefixes)
+                )
+            )
         ).all()
 
         # Collect the score distribution by course.
@@ -1145,8 +1149,12 @@ class CEAB:
             measurements = self.session.query(Measurement).filter(
                 Measurement.attribute == attribute,
                 Measurement.indicator == ind,
-                Measurement.course.has(Course.academicYear == academic_year),
-                Measurement.course.has(Course.prefix.in_(course_prefixes))
+                Measurement.course.has(
+                    and_(
+                        Course.academicYear == academic_year,
+                        Course.prefix.in_(course_prefixes)
+                    )
+                )
             ).all()
 
             # If there are no measurements for this attribute and indicator, insert "None" and skip to the next one.
@@ -1265,19 +1273,18 @@ class CEAB:
             except Exception as e:
                 print(f"Error removing {path}:", e)
 
-        # # Remove the generated .png files from the score distributions
-        # for attr, ind in attr_ind_pairs:
-        #     png_file = f"{course_code.replace(' ', '_')}_{attr}{ind}.png"
-        #     try:
-        #         os.remove(png_file)
-        #     except FileNotFoundError:
-        #         # No problem — file just doesn't exist
-        #         pass
-        #     except Exception as e:
-        #         print(f"Error removing {png_file}:", e)
+        # Remove the generated .png files 
+        for file in plot_files:
+            try:
+                os.remove(file)
+            except FileNotFoundError:
+                # No problem — file just doesn't exist
+                pass
+            except Exception as e:
+                print(f"Error removing {file}:", e)
 
-        # # Return the file name of the generated PDF report
-        # return f"{file_name}.pdf"
+        # Return the file name of the generated PDF report
+        return f"{file_name}.pdf"
 
     def generate_course_feedback_form(self, course_code: str, academic_year: str) -> str:
         """Generate a feedback form for a specific course.
