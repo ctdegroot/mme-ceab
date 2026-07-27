@@ -30,7 +30,7 @@
 \addtolength{\topmargin}{-1.6pt} % Compensate for the increased head height
 \pagestyle{fancy}
 \fancyhf{}
-\lhead{ {{ attribute_name }} }
+\lhead{ {{ attribute }} }
 \chead{CEAB Graduate Attribute Report}
 \rhead{\monthname[\month]~\the\day,~\the\year}
 \cfoot{Page \thepage~of~\pageref*{LastPage}}
@@ -84,8 +84,33 @@
                 \begin{center}
                     \includegraphics[width=0.6\textwidth]{ {{ measurement['courseCode'].replace(" ", "_") }}_{{ attribute }}{{ ind }}.png }
                 \end{center}
+
+                {% if feedback_data %}
+                    {% set course = measurement['courseCode'] %}
+                    {% set attr_key = attribute ~ ind %}
+                    
+                    {% set course_data = feedback_data.get(course) or {} %}
+                    {% set attr_data = course_data.get(attr_key) or {} %}
+
+                    Instructor Comments:
+                    \begin{quote}
+                        {% if attr_data.get('Instructor Statement') %}
+                            {{ attr_data['Instructor Statement'] | escape_latex }}
+                        {% else %}
+                            No comments provided.
+                        {% endif %}
+                    \end{quote}
+
+                    {% if attr_data.get('Instructor Statement') %}
+                        Follow-up Required? {{ attr_data.get('Follow-up Required?', 'No') | string | escape_latex }}
+                    {% endif %}
+
+                    \vspace{1em}
+
+            {% endif %}
+
             {% endfor %}
         {% endif %}
-{% endfor %}
+    {% endfor %}
 
 \end{document}

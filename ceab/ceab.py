@@ -40,7 +40,7 @@ all_attributes = {
     "CS"  : [1, 2, 3],
     "PR"  : [1, 2, 3],
     "IES" : [1, 2, 3],
-    "EE"  : [1, 2, 3],
+    "EE"  : [1, 2, 3, 4],
     "EPM" : [1, 2, 3, 4],
     "LL"  : [1, 2]
 }
@@ -141,7 +141,10 @@ class CEAB:
         for key, value in criteria.items():
             query = query.filter(getattr(table_map[table_name], key) == value)
 
-        # Return the IDs
+        # Return the IDs as a list, if there are matches. Otherwise print a warning.
+        if not query.count():
+            print(f"⚠️  No matches found for criteria {criteria} in table {table_name}.")
+            return []
         id_column = f"{table_name}ID"
         return [getattr(row, id_column) for row in query.all()]
     
@@ -203,7 +206,7 @@ class CEAB:
         """
         scores = self.get_scores_by_measurement_id(measurement_id)
         if not scores:
-            return {'1': 0, '2': 0, '3': 0, '4': 0}
+            return (0, 0, 0, 0)
         total_scores = len(scores)
         return (
                 scores.count(1) if not normalize else scores.count(1) / total_scores,
@@ -567,7 +570,7 @@ class CEAB:
         for ind in all_attributes[attr]:
             # Initialize the data for this attribute-indicator pair.
             data[ind] = {}
-
+ 
             # Get the list of academic years to consider.
             final_year = int(re.match(r'^(\d{4})', academic_year).group(1))
             initial_year = final_year - num_past_years
@@ -606,7 +609,7 @@ class CEAB:
                 data[ind][year][1] /= count
                 data[ind][year][2] /= count
                 data[ind][year][3] /= count
-            
+        
         # Create colourblind-safe color map
         COLORS = ['#332288', '#88CCEE', '#44AA99', '#117733']
 
@@ -686,7 +689,7 @@ class CEAB:
         measurements = self.session.query(Measurement).filter(
             Measurement.course.has(Course.prefix == prefix),
             Measurement.course.has(Course.number == number),
-            Measurement.course.has(Course.suffix == suffix),
+            #Measurement.course.has(Course.suffix == suffix),
             Measurement.attribute == attr,
             Measurement.indicator == ind
         ).all()
@@ -1176,7 +1179,7 @@ class CEAB:
 
         return measurement_data
 
-    def generate_graduate_attribute_report(self, attribute: str, academic_year: str, course_prefixes: list, num_past_years: int = 3) -> str:
+    def generate_graduate_attribute_report(self, attribute: str, academic_year: str, course_prefixes: list, num_past_years: int = 3, feedback_data: dict = None) -> str:
         """Generate a report for a specific graduate attribute.
 
         Parameters
@@ -1189,6 +1192,8 @@ class CEAB:
             A list of course prefixes to filter the measurements by (e.g., ['MME', 'ES']).
         num_past_years : int, optional
             The number of past years to include in the report (default is 3).
+        feedback_data : dict, optional
+            A dictionary containing feedback data for courses, if available (default is None).
 
         Returns
         -------
@@ -1241,7 +1246,8 @@ class CEAB:
         rendered_tex = template.render(attribute=attribute,
                                        attribute_name=attribute_names[attribute],
                                        academic_year=academic_year,
-                                       measurement_data=measurement_data)
+                                       measurement_data=measurement_data,
+                                       feedback_data=feedback_data)
         
         # Save LaTeX output
         file_name = "graduate_attribute_report_{}".format(attribute)
@@ -1272,7 +1278,7 @@ class CEAB:
                 pass
             except Exception as e:
                 print(f"Error removing {path}:", e)
-
+                
         # Remove the generated .png files 
         for file in plot_files:
             try:

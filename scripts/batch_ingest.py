@@ -19,7 +19,7 @@ warnings.filterwarnings(
     module="openpyxl.worksheet._reader"
 )
 
-VALID_PREFIXES = ("CHEM", "ECE", "ELI", "ES", "MME", "MSE")
+VALID_PREFIXES = ("CHEM", "ECE", "ELI", "ES", "MME", "MSE", "NMM", "PHYS", "STATS", "WRIT", "Internship")
 
 def find_single_excel_file(folder: Path) -> Path | None:
     xlsx_files = list(folder.glob("*.xlsx"))

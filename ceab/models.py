@@ -26,7 +26,7 @@ class Course(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "prefix IN ('MME', 'ECE', 'ES', 'ELI', 'MSE')",
+            "prefix IN ('MME', 'ECE', 'ES', 'ELI', 'MSE', 'CHEM', 'PHYS', 'STATS', 'WRIT', 'NMM')",
             name="check_valid_prefix"
         ),
         CheckConstraint(
@@ -71,7 +71,7 @@ class Measurement(Base):
             name="check_valid_indicator"
         ),
         CheckConstraint(
-            "deliverableType IN ('Assignment', 'Final Exam', 'Lab', 'Midterm Exam', 'Presentation', 'Project', 'Quiz', 'Test')",
+            "deliverableType IN ('Assignment', 'Final Exam', 'Lab', 'Midterm Exam', 'Presentation', 'Project', 'Quiz', 'Test', 'Course Grade')",
             name="check_valid_deliverable_type"
         ),
     )

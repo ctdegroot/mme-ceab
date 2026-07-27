@@ -20,6 +20,7 @@ def generate_instructor_reports(academic_year: str, destination: str):
 
     # Get all of the courses for the specified academic year
     courses = ceab.get_courses_by_academic_year(academic_year)
+    print(courses)
 
     if not courses:
         print(f"⚠️  No courses found for academic year {academic_year}.")
@@ -44,7 +45,7 @@ def generate_instructor_reports(academic_year: str, destination: str):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate instructor reports for a given academic year.")
-    parser.add_argument("academic_year", type=str, help="The academic year to plot data for, e.g., '2023-2024'.")
+    parser.add_argument("academic_year", type=str, help="The academic year to plot data for, e.g., '2023/24'.")
     parser.add_argument("destination", type=str, help="The destination directory to save the documents. Defaults to current directory.", nargs='?', default='.')
     args = parser.parse_args()
 
